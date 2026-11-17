@@ -1,0 +1,3 @@
+Download: Pass the URL and the optional folder name from the UI. A blank name uses video1, video2, and so on.
+Extract audio: Pass the returned video_path. Then pass the returned wav_path to Part 3.
+Rename: Call rename_video_folder(video_path.parent, new_name) and update any paths the UI is holding for that folder
