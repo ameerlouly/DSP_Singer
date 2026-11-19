@@ -1,0 +1,2651 @@
+<?xml version='1.0' encoding='utf-8'?>
+<ui version="4.0">
+  <class>MainWindow</class>
+  <widget class="QMainWindow" name="MainWindow">
+    <property name="geometry">
+      <rect>
+        <x>0</x>
+        <y>0</y>
+        <width>1380</width>
+        <height>900</height>
+      </rect>
+    </property>
+    <property name="minimumSize">
+      <size>
+        <width>1120</width>
+        <height>560</height>
+      </size>
+    </property>
+    <property name="windowTitle">
+      <string>Speech Corpus Studio</string>
+    </property>
+    <property name="styleSheet">
+      <string>
+QWidget {font-family:"Segoe UI"; font-size:14px; color:#173B40;}
+QMainWindow, QWidget#centralwidget, QStackedWidget#pages {background:#F0F4F5;}
+QFrame#sidebar {background:#173B40; border:none;}
+QLabel {background:transparent; border:none;}
+QLabel#brandLabel {color:white; font-size:23px; font-weight:600;}
+QLabel#sidebarFooter {color:#B8D4D0; font-size:12px;}
+QListWidget#navigationList {background:transparent; border:none; outline:none; color:#DCEBE9; font-size:15px;}
+QListWidget#navigationList::item {padding:16px 13px; margin:3px 0; border-radius:7px;}
+QListWidget#navigationList::item:selected {background:#147D72; color:white;}
+QListWidget#navigationList::item:hover {background:#245459;}
+QLineEdit {background:#F8FAFB; border:1px solid #C8D5D9; border-radius:6px; padding:8px 10px; selection-background-color:#147D72;}
+QLineEdit:focus {border:2px solid #147D72; padding:7px 9px;}
+QPushButton {background:#EDF3F4; border:1px solid #CBD8DC; border-radius:6px; padding:8px 14px;}
+QPushButton:hover {background:#E0ECEC; border-color:#98B8B3;}
+QPushButton:pressed {background:#CDDFDC;}
+QPlainTextEdit {background:#F8FAFB; border:1px solid #DDE6E8; border-radius:6px; padding:10px; font-family:"Consolas"; font-size:12px;}
+QProgressBar {background:#E8EFEF; border:none; border-radius:4px; min-height:8px; max-height:8px;}
+QProgressBar::chunk {background:#147D72; border-radius:4px;}
+QStatusBar {background:#F0F4F5; color:#60767A; font-size:12px;}
+
+QScrollArea#contentScrollArea, QWidget#scrollAreaWidgetContents {background:#F0F4F5; border:none;}
+QScrollBar:vertical {background:#E6EEEE; width:12px; margin:0;}
+QScrollBar::handle:vertical {background:#8CB4AD; min-height:40px; border-radius:5px; margin:2px;}
+QScrollBar::handle:vertical:hover {background:#147D72;}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {height:0;}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {background:transparent;}
+
+
+QGroupBox {background:white; border:1px solid #D7E3E6; border-radius:9px; margin-top:12px; padding:14px 10px 10px;}
+QGroupBox::title {subcontrol-origin:margin; left:14px; padding:0 5px; font-weight:600;}
+QTableWidget {background:white; alternate-background-color:#F1F7F6; gridline-color:#E1E9E9; border:1px solid #D7E3E6; border-radius:6px; selection-background-color:#D3E8E3; selection-color:#173B40;}
+QHeaderView::section {background:#EAF2F2; padding:8px; border:0; border-bottom:1px solid #D7E3E6; font-weight:600;}
+QPushButton#analyzeRegions,QPushButton#generateSegments,QPushButton#calculateSNR {background:#147D72; color:white; border-color:#147D72; font-weight:600;}
+QComboBox,QDoubleSpinBox {background:#F8FAFB; border:1px solid #C8D5D9; border-radius:6px; padding:6px; min-height:22px;}
+QPushButton:disabled {color:#8A9B9F; background:#EDF1F2;}
+</string>
+    </property>
+    <widget class="QWidget" name="centralwidget">
+      <layout class="QHBoxLayout" name="rootLayout" stretch="0,1">
+        <property name="spacing">
+          <number>0</number>
+        </property>
+        <property name="leftMargin">
+          <number>0</number>
+        </property>
+        <property name="topMargin">
+          <number>0</number>
+        </property>
+        <property name="rightMargin">
+          <number>0</number>
+        </property>
+        <property name="bottomMargin">
+          <number>0</number>
+        </property>
+        <item>
+          <widget class="QFrame" name="sidebar">
+            <property name="minimumSize">
+              <size>
+                <width>230</width>
+                <height>0</height>
+              </size>
+            </property>
+            <property name="maximumSize">
+              <size>
+                <width>230</width>
+                <height>16777215</height>
+              </size>
+            </property>
+            <layout class="QVBoxLayout" name="sidebarLayout">
+              <property name="spacing">
+                <number>18</number>
+              </property>
+              <property name="leftMargin">
+                <number>16</number>
+              </property>
+              <property name="topMargin">
+                <number>16</number>
+              </property>
+              <property name="rightMargin">
+                <number>16</number>
+              </property>
+              <property name="bottomMargin">
+                <number>16</number>
+              </property>
+              <item>
+                <widget class="QLabel" name="brandLabel">
+                  <property name="text">
+                    <string>Speech Corpus
+Studio</string>
+                  </property>
+                  <property name="wordWrap">
+                    <bool>true</bool>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <widget class="QListWidget" name="navigationList">
+                  <property name="horizontalScrollBarPolicy">
+                    <enum>Qt::ScrollBarPolicy::ScrollBarAlwaysOff</enum>
+                  </property>
+                  <property name="currentRow">
+                    <number>0</number>
+                  </property>
+                  <item>
+                    <property name="text">
+                      <string>Source &amp; Audio</string>
+                    </property>
+                  </item>
+                  <item>
+                    <property name="text">
+                      <string>Regions</string>
+                    </property>
+                  </item>
+                  <item>
+                    <property name="text">
+                      <string>Segments</string>
+                    </property>
+                  </item>
+                  <item>
+                    <property name="text">
+                      <string>Audio Quality</string>
+                    </property>
+                  </item>
+                  <item>
+                    <property name="text">
+                      <string>Transcription</string>
+                    </property>
+                  </item>
+                  <item>
+                    <property name="text">
+                      <string>Review &amp; Export</string>
+                    </property>
+                  </item>
+                </widget>
+              </item>
+              <item>
+                <widget class="QPushButton" name="openProjectFolderButton">
+                  <property name="minimumSize">
+                    <size>
+                      <width>105</width>
+                      <height>38</height>
+                    </size>
+                  </property>
+                  <property name="text">
+                    <string>Project folder</string>
+                  </property>
+                  <property name="styleSheet">
+                    <string>QPushButton#openProjectFolderButton {background:#E9F0F8; color:#335D87; border:1px solid #C4D4E6; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#openProjectFolderButton:hover {background:#DBE7F4;}
+QPushButton#openProjectFolderButton:pressed {background:#CBDCEF;}
+QPushButton#openProjectFolderButton:focus {border:2px solid #335D87; padding:7px 13px;}
+QPushButton#openProjectFolderButton:disabled {background:#EDF1F2; color:#87999D; border:1px solid #D8E1E3;}</string>
+                  </property>
+                </widget>
+              </item>
+              <item>
+                <widget class="QLabel" name="sidebarFooter">
+                  <property name="text">
+                    <string>Speech Processing Project</string>
+                  </property>
+                  <property name="wordWrap">
+                    <bool>true</bool>
+                  </property>
+                </widget>
+              </item>
+            </layout>
+          </widget>
+        </item>
+        <item>
+          <widget class="QScrollArea" name="contentScrollArea">
+            <property name="frameShape">
+              <enum>QFrame::Shape::NoFrame</enum>
+            </property>
+            <property name="verticalScrollBarPolicy">
+              <enum>Qt::ScrollBarPolicy::ScrollBarAsNeeded</enum>
+            </property>
+            <property name="widgetResizable">
+              <bool>true</bool>
+            </property>
+            <widget class="QWidget" name="scrollAreaWidgetContents">
+              <property name="geometry">
+                <rect>
+                  <x>0</x>
+                  <y>0</y>
+                  <width>1138</width>
+                  <height>999</height>
+                </rect>
+              </property>
+              <layout class="QVBoxLayout" name="scrollContentLayout">
+                <property name="spacing">
+                  <number>0</number>
+                </property>
+                <property name="leftMargin">
+                  <number>0</number>
+                </property>
+                <property name="topMargin">
+                  <number>0</number>
+                </property>
+                <property name="rightMargin">
+                  <number>0</number>
+                </property>
+                <property name="bottomMargin">
+                  <number>0</number>
+                </property>
+                <item>
+                  <widget class="QWidget" name="sharedControlsFrame">
+                    <property name="visible">
+                      <bool>false</bool>
+                    </property>
+                    <layout class="QVBoxLayout" name="sharedControlsLayout">
+                      <property name="leftMargin">
+                        <number>20</number>
+                      </property>
+                      <property name="rightMargin">
+                        <number>20</number>
+                      </property>
+                      <property name="topMargin">
+                        <number>10</number>
+                      </property>
+                      <property name="bottomMargin">
+                        <number>0</number>
+                      </property>
+                      <item>
+                        <layout class="QHBoxLayout" name="sharedSourceRowLayout">
+                          <item>
+                            <widget class="QLabel" name="wavLabel">
+                              <property name="text">
+                                <string>Audio WAV</string>
+                              </property>
+                              <property name="wordWrap">
+                                <bool>true</bool>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QLineEdit" name="wavPath">
+                              <property name="placeholderText">
+                                <string>Choose a 16 kHz, mono, 16-bit PCM WAV</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QPushButton" name="chooseWav">
+                              <property name="styleSheet">
+                                <string>QPushButton#chooseWav {background:#1E607A; color:#FFFFFF; border:1px solid #1E607A; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#chooseWav:hover {background:#1B566E; border-color:#1B566E;}
+QPushButton#chooseWav:pressed {background:#184D62; border-color:#184D62;}
+QPushButton#chooseWav:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#chooseWav:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                              </property>
+                              <property name="text">
+                                <string>Browse WAV</string>
+                              </property>
+                            </widget>
+                          </item>
+                        </layout>
+                      </item>
+                      <item>
+                        <layout class="QHBoxLayout" name="sharedReviewerRowLayout">
+                          <item>
+                            <widget class="QLabel" name="reviewerLabel">
+                              <property name="text">
+                                <string>Reviewer</string>
+                              </property>
+                              <property name="wordWrap">
+                                <bool>true</bool>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QLineEdit" name="reviewer">
+                              <property name="placeholderText">
+                                <string>Your name for the correction history</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QPushButton" name="stopPlayback">
+                              <property name="styleSheet">
+                                <string>QPushButton#stopPlayback {background:#C83E3B; color:#FFFFFF; border:1px solid #C83E3B; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#stopPlayback:hover {background:#B43835; border-color:#B43835;}
+QPushButton#stopPlayback:pressed {background:#A0322F; border-color:#A0322F;}
+QPushButton#stopPlayback:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#stopPlayback:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                              </property>
+                              <property name="text">
+                                <string>Stop playback</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QPushButton" name="saveProject">
+                              <property name="styleSheet">
+                                <string>QPushButton#saveProject {background:#157A6E; color:#FFFFFF; border:1px solid #157A6E; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#saveProject:hover {background:#136E63; border-color:#136E63;}
+QPushButton#saveProject:pressed {background:#116258; border-color:#116258;}
+QPushButton#saveProject:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#saveProject:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                              </property>
+                              <property name="text">
+                                <string>Save session</string>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QPushButton" name="openProject">
+                              <property name="styleSheet">
+                                <string>QPushButton#openProject {background:#3B5998; color:#FFFFFF; border:1px solid #3B5998; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#openProject:hover {background:#355089; border-color:#355089;}
+QPushButton#openProject:pressed {background:#2F477A; border-color:#2F477A;}
+QPushButton#openProject:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#openProject:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                              </property>
+                              <property name="text">
+                                <string>Open session</string>
+                              </property>
+                            </widget>
+                          </item>
+                        </layout>
+                      </item>
+                    </layout>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QStackedWidget" name="pages">
+                    <property name="minimumSize">
+                      <size>
+                        <width>860</width>
+                        <height>820</height>
+                      </size>
+                    </property>
+                    <property name="currentIndex">
+                      <number>0</number>
+                    </property>
+                    <widget class="QWidget" name="sourcePage">
+                      <layout class="QVBoxLayout" name="sourcePageLayout">
+                        <property name="spacing">
+                          <number>18</number>
+                        </property>
+                        <property name="leftMargin">
+                          <number>24</number>
+                        </property>
+                        <property name="topMargin">
+                          <number>24</number>
+                        </property>
+                        <property name="rightMargin">
+                          <number>24</number>
+                        </property>
+                        <property name="bottomMargin">
+                          <number>24</number>
+                        </property>
+                        <item>
+                          <widget class="QLabel" name="sourceHeading">
+                            <property name="styleSheet">
+                              <string>font-size:30px; font-weight:700;</string>
+                            </property>
+                            <property name="text">
+                              <string>Source &amp; Audio</string>
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QLabel" name="sourceSubtitle">
+                            <property name="styleSheet">
+                              <string>color:#60767A;</string>
+                            </property>
+                            <property name="text">
+                              <string>Download a video and prepare its audio.</string>
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <layout class="QHBoxLayout" name="sourceColumns" stretch="1,0">
+                            <property name="spacing">
+                              <number>18</number>
+                            </property>
+                            <property name="leftMargin">
+                              <number>0</number>
+                            </property>
+                            <property name="topMargin">
+                              <number>0</number>
+                            </property>
+                            <property name="rightMargin">
+                              <number>0</number>
+                            </property>
+                            <property name="bottomMargin">
+                              <number>0</number>
+                            </property>
+                            <item>
+                              <layout class="QVBoxLayout" name="sourceControlsLayout" stretch="0,0,1">
+                                <property name="spacing">
+                                  <number>16</number>
+                                </property>
+                                <property name="leftMargin">
+                                  <number>0</number>
+                                </property>
+                                <property name="topMargin">
+                                  <number>0</number>
+                                </property>
+                                <property name="rightMargin">
+                                  <number>0</number>
+                                </property>
+                                <property name="bottomMargin">
+                                  <number>0</number>
+                                </property>
+                                <item>
+                                  <widget class="QFrame" name="downloadCard">
+                                    <property name="styleSheet">
+                                      <string>QFrame#downloadCard {background:#FFFFFF; border:1px solid #DDE6E8; border-radius:10px;}</string>
+                                    </property>
+                                    <layout class="QVBoxLayout" name="downloadCardLayout">
+                                      <property name="spacing">
+                                        <number>10</number>
+                                      </property>
+                                      <property name="leftMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <property name="topMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <property name="rightMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <property name="bottomMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <item>
+                                        <widget class="QLabel" name="downloadCardTitle">
+                                          <property name="styleSheet">
+                                            <string>font-size:19px; font-weight:600;</string>
+                                          </property>
+                                          <property name="text">
+                                            <string>Download video</string>
+                                          </property>
+                                          <property name="wordWrap">
+                                            <bool>true</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <widget class="QLabel" name="urlLabel">
+                                          <property name="text">
+                                            <string>Video URL</string>
+                                          </property>
+                                          <property name="wordWrap">
+                                            <bool>true</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <widget class="QLineEdit" name="urlInput">
+                                          <property name="minimumSize">
+                                            <size>
+                                              <width>0</width>
+                                              <height>38</height>
+                                            </size>
+                                          </property>
+                                          <property name="text">
+                                            <string />
+                                          </property>
+                                          <property name="placeholderText">
+                                            <string>Paste a single video link</string>
+                                          </property>
+                                          <property name="clearButtonEnabled">
+                                            <bool>true</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <layout class="QHBoxLayout" name="outputFolderRow">
+                                          <property name="spacing">
+                                            <number>10</number>
+                                          </property>
+                                          <property name="leftMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="topMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="rightMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="bottomMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <item>
+                                            <widget class="QLabel" name="outputFolderLabel">
+                                              <property name="text">
+                                                <string>📁  Destination  </string>
+                                              </property>
+                                              <property name="wordWrap">
+                                                <bool>true</bool>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                          <item>
+                                            <widget class="QLineEdit" name="outputFolderInput">
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>0</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="text">
+                                                <string />
+                                              </property>
+                                              <property name="placeholderText">
+                                                <string>Choose a destination folder</string>
+                                              </property>
+                                              <property name="clearButtonEnabled">
+                                                <bool>true</bool>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                          <item>
+                                            <widget class="QPushButton" name="browseOutputButton">
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>150</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="text">
+                                                <string>Browse</string>
+                                              </property>
+                                              <property name="styleSheet">
+                                                <string>QPushButton#browseOutputButton {background:#E9F0F8; color:#335D87; border:1px solid #C4D4E6; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#browseOutputButton:hover {background:#DBE7F4;}
+QPushButton#browseOutputButton:pressed {background:#CBDCEF;}
+QPushButton#browseOutputButton:focus {border:2px solid #335D87; padding:7px 13px;}
+QPushButton#browseOutputButton:disabled {background:#EDF1F2; color:#87999D; border:1px solid #D8E1E3;}</string>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                        </layout>
+                                      </item>
+                                      <item>
+                                        <layout class="QHBoxLayout" name="folderNameRow">
+                                          <property name="spacing">
+                                            <number>10</number>
+                                          </property>
+                                          <property name="leftMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="topMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="rightMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="bottomMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <item>
+                                            <widget class="QLabel" name="folderNameLabel">
+                                              <property name="text">
+                                                <string>📁  Folder name</string>
+                                              </property>
+                                              <property name="wordWrap">
+                                                <bool>true</bool>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                          <item>
+                                            <widget class="QLineEdit" name="folderNameInput">
+                                              <property name="enabled">
+                                                <bool>true</bool>
+                                              </property>
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>0</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="text">
+                                                <string />
+                                              </property>
+                                              <property name="placeholderText">
+                                                <string>Automatic: video1, video2, ...</string>
+                                              </property>
+                                              <property name="clearButtonEnabled">
+                                                <bool>true</bool>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                          <item>
+                                            <widget class="QPushButton" name="downloadButton">
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>150</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="styleSheet">
+                                                <string>QPushButton#downloadButton {background:#147D72; color:#FFFFFF; border:1px solid #147D72; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#downloadButton:hover {background:#10695F;}
+QPushButton#downloadButton:pressed {background:#0D584F;}
+QPushButton#downloadButton:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#downloadButton:disabled {background:#EDF1F2; color:#87999D; border:1px solid #D8E1E3;}</string>
+                                              </property>
+                                              <property name="text">
+                                                <string>Download video</string>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                        </layout>
+                                      </item>
+                                      <item>
+                                        <widget class="QProgressBar" name="downloadProgressBar">
+                                          <property name="toolTip">
+                                            <string>Video download progress. Updated by the Python downloader.</string>
+                                          </property>
+                                          <property name="styleSheet">
+                                            <string>QProgressBar#downloadProgressBar {
+    background: #E8EFEF;
+    color: #173B40;
+    border: none;
+    border-radius: 5px;
+    min-height: 20px;
+    max-height: 20px;
+    font-size: 12px;
+    font-weight: 600;
+}
+QProgressBar#downloadProgressBar::chunk {
+    background: #69BEB0;
+    border-radius: 5px;
+}</string>
+                                          </property>
+                                          <property name="minimum">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="maximum">
+                                            <number>100</number>
+                                          </property>
+                                          <property name="value">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="alignment">
+                                            <set>Qt::AlignmentFlag::AlignCenter</set>
+                                          </property>
+                                          <property name="textVisible">
+                                            <bool>false</bool>
+                                          </property>
+                                          <property name="format">
+                                            <string>%p%</string>
+                                          </property>
+                                          <property name="visible">
+                                            <bool>false</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                    </layout>
+                                  </widget>
+                                </item>
+                                <item>
+                                  <widget class="QFrame" name="audioCard">
+                                    <property name="styleSheet">
+                                      <string>QFrame#audioCard {background:#FFFFFF; border:1px solid #DDE6E8; border-radius:10px;}</string>
+                                    </property>
+                                    <layout class="QVBoxLayout" name="audioCardLayout">
+                                      <property name="spacing">
+                                        <number>10</number>
+                                      </property>
+                                      <property name="leftMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <property name="topMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <property name="rightMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <property name="bottomMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <item>
+                                        <widget class="QLabel" name="audioCardTitle">
+                                          <property name="styleSheet">
+                                            <string>font-size:19px; font-weight:600;</string>
+                                          </property>
+                                          <property name="text">
+                                            <string>Extract audio</string>
+                                          </property>
+                                          <property name="wordWrap">
+                                            <bool>true</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <widget class="QLabel" name="videoPathLabel">
+                                          <property name="text">
+                                            <string>Selected video</string>
+                                          </property>
+                                          <property name="wordWrap">
+                                            <bool>true</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <layout class="QHBoxLayout" name="videoSelectionRow">
+                                          <property name="spacing">
+                                            <number>10</number>
+                                          </property>
+                                          <property name="leftMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="topMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="rightMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="bottomMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <item>
+                                            <widget class="QLineEdit" name="videoPathInput">
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>0</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="text">
+                                                <string />
+                                              </property>
+                                              <property name="placeholderText">
+                                                <string>Select or download a video</string>
+                                              </property>
+                                              <property name="clearButtonEnabled">
+                                                <bool>true</bool>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                          <item>
+                                            <widget class="QPushButton" name="chooseVideoButton">
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>105</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="text">
+                                                <string>Choose video</string>
+                                              </property>
+                                              <property name="styleSheet">
+                                                <string>QPushButton#chooseVideoButton {background:#E9F0F8; color:#335D87; border:1px solid #C4D4E6; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#chooseVideoButton:hover {background:#DBE7F4;}
+QPushButton#chooseVideoButton:pressed {background:#CBDCEF;}
+QPushButton#chooseVideoButton:focus {border:2px solid #335D87; padding:7px 13px;}
+QPushButton#chooseVideoButton:disabled {background:#EDF1F2; color:#87999D; border:1px solid #D8E1E3;}</string>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                        </layout>
+                                      </item>
+                                      <item>
+                                        <layout class="QHBoxLayout" name="audioActionsRow">
+                                          <property name="spacing">
+                                            <number>10</number>
+                                          </property>
+                                          <property name="leftMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="topMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="rightMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="bottomMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <item>
+                                            <widget class="QLabel" name="audioFormatLabel">
+                                              <property name="styleSheet">
+                                                <string>color:#147D72; font-weight:600;</string>
+                                              </property>
+                                              <property name="text">
+                                                <string>Audio parameters: 16 kHz  /  Mono  /  16-bit PCM WAV</string>
+                                              </property>
+                                              <property name="wordWrap">
+                                                <bool>true</bool>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                          <item>
+                                            <widget class="QPushButton" name="extractButton">
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>105</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="styleSheet">
+                                                <string>QPushButton#extractButton {background:#147D72; color:#FFFFFF; border:1px solid #147D72; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#extractButton:hover {background:#10695F;}
+QPushButton#extractButton:pressed {background:#0D584F;}
+QPushButton#extractButton:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#extractButton:disabled {background:#EDF1F2; color:#87999D; border:1px solid #D8E1E3;}</string>
+                                              </property>
+                                              <property name="text">
+                                                <string>Extract audio</string>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                        </layout>
+                                      </item>
+                                    </layout>
+                                  </widget>
+                                </item>
+                                <item>
+                                  <widget class="QFrame" name="activityCard">
+                                    <property name="styleSheet">
+                                      <string>QFrame#activityCard {background:#FFFFFF; border:1px solid #DDE6E8; border-radius:10px;}</string>
+                                    </property>
+                                    <layout class="QVBoxLayout" name="activityCardLayout">
+                                      <property name="spacing">
+                                        <number>10</number>
+                                      </property>
+                                      <property name="leftMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <property name="topMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <property name="rightMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <property name="bottomMargin">
+                                        <number>16</number>
+                                      </property>
+                                      <item>
+                                        <widget class="QLabel" name="activityCardTitle">
+                                          <property name="styleSheet">
+                                            <string>font-size:19px; font-weight:600;</string>
+                                          </property>
+                                          <property name="text">
+                                            <string>Activity</string>
+                                          </property>
+                                          <property name="wordWrap">
+                                            <bool>true</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <layout class="QHBoxLayout" name="statusRow">
+                                          <property name="spacing">
+                                            <number>10</number>
+                                          </property>
+                                          <property name="leftMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="topMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="rightMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="bottomMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <item>
+                                            <widget class="QLabel" name="statusLabel">
+                                              <property name="styleSheet">
+                                                <string>color:#147D72; font-weight:600;</string>
+                                              </property>
+                                              <property name="text">
+                                                <string>Ready</string>
+                                              </property>
+                                              <property name="wordWrap">
+                                                <bool>true</bool>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                          <item>
+                                            <widget class="QLabel" name="elapsedLabel">
+                                              <property name="text">
+                                                <string />
+                                              </property>
+                                              <property name="wordWrap">
+                                                <bool>true</bool>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                        </layout>
+                                      </item>
+                                      <item>
+                                        <widget class="QProgressBar" name="progressBar">
+                                          <property name="value">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="textVisible">
+                                            <bool>false</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <widget class="QPlainTextEdit" name="activityLog">
+                                          <property name="minimumSize">
+                                            <size>
+                                              <width>0</width>
+                                              <height>70</height>
+                                            </size>
+                                          </property>
+                                          <property name="readOnly">
+                                            <bool>true</bool>
+                                          </property>
+                                          <property name="placeholderText">
+                                            <string>Progress and messages will appear here.</string>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <layout class="QHBoxLayout" name="reportActionsRow">
+                                          <property name="spacing">
+                                            <number>10</number>
+                                          </property>
+                                          <property name="leftMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="topMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="rightMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <property name="bottomMargin">
+                                            <number>0</number>
+                                          </property>
+                                          <item>
+                                            <widget class="QPushButton" name="renameFolderButton">
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>105</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="text">
+                                                <string>Rename folder</string>
+                                              </property>
+                                              <property name="styleSheet">
+                                                <string>QPushButton#renameFolderButton {background:#FFF2DC; color:#79551B; border:1px solid #E8CF9F; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#renameFolderButton:hover {background:#F9E6C2;}
+QPushButton#renameFolderButton:pressed {background:#F0D7A8;}
+QPushButton#renameFolderButton:focus {border:2px solid #79551B; padding:7px 13px;}
+QPushButton#renameFolderButton:disabled {background:#EDF1F2; color:#87999D; border:1px solid #D8E1E3;}</string>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                          <item>
+                                            <widget class="QPushButton" name="openReportButton">
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>105</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="text">
+                                                <string>Open report</string>
+                                              </property>
+                                              <property name="styleSheet">
+                                                <string>QPushButton#openReportButton {background:#F0ECF8; color:#654D87; border:1px solid #D3C7E7; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#openReportButton:hover {background:#E5DDF1;}
+QPushButton#openReportButton:pressed {background:#D9CEE9;}
+QPushButton#openReportButton:focus {border:2px solid #654D87; padding:7px 13px;}
+QPushButton#openReportButton:disabled {background:#EDF1F2; color:#87999D; border:1px solid #D8E1E3;}</string>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                          <item>
+                                            <widget class="QPushButton" name="openOutputFolderButton">
+                                              <property name="minimumSize">
+                                                <size>
+                                                  <width>105</width>
+                                                  <height>38</height>
+                                                </size>
+                                              </property>
+                                              <property name="text">
+                                                <string>Open folder</string>
+                                              </property>
+                                              <property name="styleSheet">
+                                                <string>QPushButton#openOutputFolderButton {background:#E9F0F8; color:#335D87; border:1px solid #C4D4E6; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#openOutputFolderButton:hover {background:#DBE7F4;}
+QPushButton#openOutputFolderButton:pressed {background:#CBDCEF;}
+QPushButton#openOutputFolderButton:focus {border:2px solid #335D87; padding:7px 13px;}
+QPushButton#openOutputFolderButton:disabled {background:#EDF1F2; color:#87999D; border:1px solid #D8E1E3;}</string>
+                                              </property>
+                                            </widget>
+                                          </item>
+                                        </layout>
+                                      </item>
+                                    </layout>
+                                  </widget>
+                                </item>
+                              </layout>
+                            </item>
+                            <item>
+                              <widget class="QFrame" name="detailsCard">
+                                <property name="minimumSize">
+                                  <size>
+                                    <width>240</width>
+                                    <height>0</height>
+                                  </size>
+                                </property>
+                                <property name="maximumSize">
+                                  <size>
+                                    <width>270</width>
+                                    <height>16777215</height>
+                                  </size>
+                                </property>
+                                <property name="styleSheet">
+                                  <string>QFrame#detailsCard {background:#FFFFFF; border:1px solid #DDE6E8; border-radius:10px;}</string>
+                                </property>
+                                <layout class="QVBoxLayout" name="detailsLayout">
+                                  <property name="spacing">
+                                    <number>12</number>
+                                  </property>
+                                  <property name="leftMargin">
+                                    <number>20</number>
+                                  </property>
+                                  <property name="topMargin">
+                                    <number>20</number>
+                                  </property>
+                                  <property name="rightMargin">
+                                    <number>20</number>
+                                  </property>
+                                  <property name="bottomMargin">
+                                    <number>20</number>
+                                  </property>
+                                  <item>
+                                    <widget class="QLabel" name="detailsTitle">
+                                      <property name="styleSheet">
+                                        <string>font-size:20px; font-weight:600;</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Source details</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item>
+                                    <widget class="QLabel" name="titleFieldLabel">
+                                      <property name="styleSheet">
+                                        <string>font-weight:600;</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Title</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item>
+                                    <widget class="QLabel" name="titleValueLabel">
+                                      <property name="styleSheet">
+                                        <string>color:#60767A;</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Not available yet</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item>
+                                    <widget class="QLabel" name="channelFieldLabel">
+                                      <property name="styleSheet">
+                                        <string>font-weight:600;</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Channel</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item>
+                                    <widget class="QLabel" name="channelValueLabel">
+                                      <property name="styleSheet">
+                                        <string>color:#60767A;</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Not available yet</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item>
+                                    <widget class="QLabel" name="durationFieldLabel">
+                                      <property name="styleSheet">
+                                        <string>font-weight:600;</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Duration</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item>
+                                    <widget class="QLabel" name="durationValueLabel">
+                                      <property name="styleSheet">
+                                        <string>color:#60767A;</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Not available yet</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item>
+                                    <widget class="QLabel" name="licenseFieldLabel">
+                                      <property name="styleSheet">
+                                        <string>font-weight:600;</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>License</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item>
+                                    <widget class="QLabel" name="licenseValueLabel">
+                                      <property name="styleSheet">
+                                        <string>color:#60767A;</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Not available yet</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item>
+                                    <spacer name="detailsSpacer">
+                                      <property name="orientation">
+                                        <enum>Qt::Orientation::Vertical</enum>
+                                      </property>
+                                      <property name="sizeHint" stdset="0">
+                                        <size>
+                                          <width>20</width>
+                                          <height>40</height>
+                                        </size>
+                                      </property>
+                                    </spacer>
+                                  </item>
+                                </layout>
+                              </widget>
+                            </item>
+                          </layout>
+                        </item>
+                      </layout>
+                    </widget>
+                    <widget class="QWidget" name="regionsPage">
+                      <layout class="QVBoxLayout" name="regionsWorkspaceLayout">
+                        <item>
+                          <widget class="QLabel" name="regionsTitle">
+                            <property name="styleSheet">
+                              <string>font-size:24px; font-weight:600;</string>
+                            </property>
+                            <property name="text">
+                              <string>Labeling Regions</string>
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <layout class="QHBoxLayout" name="regionActionsLayout">
+                            <item>
+                              <widget class="QPushButton" name="showSpectrogram">
+                                <property name="styleSheet">
+                                  <string>QPushButton#showSpectrogram {background:#2563EB; color:#FFFFFF; border:1px solid #2563EB; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#showSpectrogram:hover {background:#2159D4; border-color:#2159D4;}
+QPushButton#showSpectrogram:pressed {background:#1E4FBC; border-color:#1E4FBC;}
+QPushButton#showSpectrogram:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#showSpectrogram:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Show spectrogram</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QPushButton" name="analyzeRegions">
+                                <property name="styleSheet">
+                                  <string>QPushButton#analyzeRegions {background:#0F766E; color:#FFFFFF; border:1px solid #0F766E; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#analyzeRegions:hover {background:#0E6A63; border-color:#0E6A63;}
+QPushButton#analyzeRegions:pressed {background:#0C5E58; border-color:#0C5E58;}
+QPushButton#analyzeRegions:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#analyzeRegions:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Label automatically</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QPushButton" name="loadRegions">
+                                <property name="styleSheet">
+                                  <string>QPushButton#loadRegions {background:#7C3AED; color:#FFFFFF; border:1px solid #7C3AED; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#loadRegions:hover {background:#7034D5; border-color:#7034D5;}
+QPushButton#loadRegions:pressed {background:#632EBE; border-color:#632EBE;}
+QPushButton#loadRegions:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#loadRegions:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Open region report</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QPushButton" name="saveRegions">
+                                <property name="styleSheet">
+                                  <string>QPushButton#saveRegions {background:#D97706; color:#FFFFFF; border:1px solid #D97706; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#saveRegions:hover {background:#C36B05; border-color:#C36B05;}
+QPushButton#saveRegions:pressed {background:#AE5F05; border-color:#AE5F05;}
+QPushButton#saveRegions:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#saveRegions:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Save HTML report</string>
+                                </property>
+                              </widget>
+                            </item>
+                          </layout>
+                        </item>
+                        <item>
+                          <widget class="QLabel" name="regionHint">
+                            <property name="text">
+                              <string />
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QWidget" name="spectrogramHost">
+                            <property name="minimumSize">
+                              <size>
+                                <width>0</width>
+                                <height>290</height>
+                              </size>
+                            </property>
+                            <layout class="QVBoxLayout" name="plotLayout" />
+                          </widget>
+                        </item>
+                        <item>
+                          <layout class="QHBoxLayout" name="regionColorKeyLayout">
+                            <item>
+                              <widget class="QLabel" name="speechKeyLabel">
+                                <property name="toolTip">
+                                  <string>Speech region color</string>
+                                </property>
+                                <property name="text">
+                                  <string>&lt;span style="color:#268b80; font-size:20px;"&gt;■&lt;/span&gt;  Speech</string>
+                                </property>
+                                <property name="alignment">
+                                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QLabel" name="musicKeyLabel">
+                                <property name="toolTip">
+                                  <string>Music region color</string>
+                                </property>
+                                <property name="text">
+                                  <string>&lt;span style="color:#a77cbc; font-size:20px;"&gt;■&lt;/span&gt;  Music</string>
+                                </property>
+                                <property name="alignment">
+                                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QLabel" name="mixedKeyLabel">
+                                <property name="toolTip">
+                                  <string>Mixed region color</string>
+                                </property>
+                                <property name="text">
+                                  <string>&lt;span style="color:#e6ab54; font-size:20px;"&gt;■&lt;/span&gt;  Mixed</string>
+                                </property>
+                                <property name="alignment">
+                                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QLabel" name="silenceKeyLabel">
+                                <property name="toolTip">
+                                  <string>Silence region color</string>
+                                </property>
+                                <property name="text">
+                                  <string>&lt;span style="color:#a1afb4; font-size:20px;"&gt;■&lt;/span&gt;  Silence</string>
+                                </property>
+                                <property name="alignment">
+                                  <set>Qt::AlignmentFlag::AlignCenter</set>
+                                </property>
+                              </widget>
+                            </item>
+                          </layout>
+                        </item>
+                        <item>
+                          <widget class="QTableWidget" name="regionTable">
+                            <column>
+                              <property name="text">
+                                <string>Start (s)</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>End (s)</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Label</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Automatic label</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Auto score</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Review</string>
+                              </property>
+                            </column>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QGroupBox" name="regionEditor">
+                            <property name="styleSheet">
+                              <string>QGroupBox#regionEditor { margin-top:0px; padding-top:12px; }</string>
+                            </property>
+                            <property name="title">
+                              <string />
+                            </property>
+                            <layout class="QVBoxLayout" name="regionEditorLayout">
+                              <item>
+                                <widget class="QLabel" name="regionEditorHeading">
+                                  <property name="styleSheet">
+                                    <string>font-weight:700; font-size:15px;</string>
+                                  </property>
+                                  <property name="text">
+                                    <string>Review selected region</string>
+                                  </property>
+                                </widget>
+                              </item>
+                              <item>
+                                <layout class="QGridLayout" name="regionEditRowLayout" columnstretch="0,1,0,1">
+                                  <item row="0" column="0">
+                                    <widget class="QLabel" name="regionStartLabel">
+                                      <property name="text">
+                                        <string>Start (s)</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="1">
+                                    <widget class="QDoubleSpinBox" name="regionStart">
+                                      <property name="decimals">
+                                        <number>4</number>
+                                      </property>
+                                      <property name="minimum">
+                                        <double>0.000000000000000</double>
+                                      </property>
+                                      <property name="maximum">
+                                        <double>999999.000000000000000</double>
+                                      </property>
+                                      <property name="singleStep">
+                                        <double>0.010000000000000</double>
+                                      </property>
+                                      <property name="value">
+                                        <double>0.000000000000000</double>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="2">
+                                    <widget class="QLabel" name="regionEndLabel">
+                                      <property name="text">
+                                        <string>End (s)</string>
+                                      </property>
+                                      <property name="wordWrap">
+                                        <bool>true</bool>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="3">
+                                    <widget class="QDoubleSpinBox" name="regionEnd">
+                                      <property name="decimals">
+                                        <number>4</number>
+                                      </property>
+                                      <property name="minimum">
+                                        <double>0.000000000000000</double>
+                                      </property>
+                                      <property name="maximum">
+                                        <double>999999.000000000000000</double>
+                                      </property>
+                                      <property name="singleStep">
+                                        <double>0.010000000000000</double>
+                                      </property>
+                                      <property name="value">
+                                        <double>0.000000000000000</double>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="1" column="1">
+                                    <widget class="QComboBox" name="regionLabel">
+                                      <item>
+                                        <property name="text">
+                                          <string>speech</string>
+                                        </property>
+                                      </item>
+                                      <item>
+                                        <property name="text">
+                                          <string>music</string>
+                                        </property>
+                                      </item>
+                                      <item>
+                                        <property name="text">
+                                          <string>mixed</string>
+                                        </property>
+                                      </item>
+                                      <item>
+                                        <property name="text">
+                                          <string>silence</string>
+                                        </property>
+                                      </item>
+                                    </widget>
+                                  </item>
+                                  <item row="1" column="2" colspan="2">
+                                    <widget class="QPushButton" name="applyRegion">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#applyRegion {background:#D97706; color:#FFFFFF; border:1px solid #D97706; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#applyRegion:hover {background:#C36B05; border-color:#C36B05;}
+QPushButton#applyRegion:pressed {background:#AE5F05; border-color:#AE5F05;}
+QPushButton#applyRegion:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#applyRegion:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Apply correction</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="1" column="0">
+                                    <widget class="QLabel" name="regionCorrectionLabel">
+                                      <property name="text">
+                                        <string>Label</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                </layout>
+                              </item>
+                              <item>
+                                <layout class="QGridLayout" name="regionExtraRowLayout">
+                                  <item row="0" column="0">
+                                    <widget class="QPushButton" name="playRegion">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#playRegion {background:#157A6E; color:#FFFFFF; border:1px solid #157A6E; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#playRegion:hover {background:#136E63; border-color:#136E63;}
+QPushButton#playRegion:pressed {background:#116258; border-color:#116258;}
+QPushButton#playRegion:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#playRegion:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Play region</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="1">
+                                    <widget class="QPushButton" name="playRegionStart">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#playRegionStart {background:#2563EB; color:#FFFFFF; border:1px solid #2563EB; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#playRegionStart:hover {background:#2159D4; border-color:#2159D4;}
+QPushButton#playRegionStart:pressed {background:#1E4FBC; border-color:#1E4FBC;}
+QPushButton#playRegionStart:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#playRegionStart:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Listen around start</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="2">
+                                    <widget class="QPushButton" name="playRegionEnd">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#playRegionEnd {background:#4F46E5; color:#FFFFFF; border:1px solid #4F46E5; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#playRegionEnd:hover {background:#473FCE; border-color:#473FCE;}
+QPushButton#playRegionEnd:pressed {background:#3F38B7; border-color:#3F38B7;}
+QPushButton#playRegionEnd:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#playRegionEnd:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Listen around end</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="3">
+                                    <widget class="QPushButton" name="splitRegion">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#splitRegion {background:#C2410C; color:#FFFFFF; border:1px solid #C2410C; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#splitRegion:hover {background:#AF3A0B; border-color:#AF3A0B;}
+QPushButton#splitRegion:pressed {background:#9B340A; border-color:#9B340A;}
+QPushButton#splitRegion:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#splitRegion:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Split at midpoint</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="1" column="0">
+                                    <widget class="QPushButton" name="mergeRegion">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#mergeRegion {background:#7C3AED; color:#FFFFFF; border:1px solid #7C3AED; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#mergeRegion:hover {background:#7034D5; border-color:#7034D5;}
+QPushButton#mergeRegion:pressed {background:#632EBE; border-color:#632EBE;}
+QPushButton#mergeRegion:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#mergeRegion:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Merge with next</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="1" column="1">
+                                    <widget class="QPushButton" name="goSegments">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#goSegments {background:#0E7490; color:#FFFFFF; border:1px solid #0E7490; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#goSegments:hover {background:#0D6882; border-color:#0D6882;}
+QPushButton#goSegments:pressed {background:#0B5D73; border-color:#0B5D73;}
+QPushButton#goSegments:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#goSegments:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Continue to segments →</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                </layout>
+                              </item>
+                            </layout>
+                          </widget>
+                        </item>
+                      </layout>
+                    </widget>
+                    <widget class="QWidget" name="segmentsPage">
+                      <layout class="QVBoxLayout" name="segmentsWorkspaceLayout">
+                        <item>
+                          <widget class="QLabel" name="segmentsTitle">
+                            <property name="styleSheet">
+                              <string>font-size:24px; font-weight:600;</string>
+                            </property>
+                            <property name="text">
+                              <string>Segmenting the Speech</string>
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <layout class="QHBoxLayout" name="segmentActionsLayout">
+                            <item>
+                              <widget class="QComboBox" name="segmentationMode">
+                                <item>
+                                  <property name="text">
+                                    <string>Natural pauses (default)</string>
+                                  </property>
+                                </item>
+                                <item>
+                                  <property name="text">
+                                    <string>Compact joins + fallback (review required)</string>
+                                  </property>
+                                </item>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QPushButton" name="generateSegments">
+                                <property name="styleSheet">
+                                  <string>QPushButton#generateSegments {background:#0F766E; color:#FFFFFF; border:1px solid #0F766E; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#generateSegments:hover {background:#0E6A63; border-color:#0E6A63;}
+QPushButton#generateSegments:pressed {background:#0C5E58; border-color:#0C5E58;}
+QPushButton#generateSegments:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#generateSegments:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Generate candidates</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QPushButton" name="loadCandidates">
+                                <property name="styleSheet">
+                                  <string>QPushButton#loadCandidates {background:#2563EB; color:#FFFFFF; border:1px solid #2563EB; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#loadCandidates:hover {background:#2159D4; border-color:#2159D4;}
+QPushButton#loadCandidates:pressed {background:#1E4FBC; border-color:#1E4FBC;}
+QPushButton#loadCandidates:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#loadCandidates:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Open candidates / review</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item>
+                              <widget class="QPushButton" name="exportSegments">
+                                <property name="styleSheet">
+                                  <string>QPushButton#exportSegments {background:#D97706; color:#FFFFFF; border:1px solid #D97706; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#exportSegments:hover {background:#C36B05; border-color:#C36B05;}
+QPushButton#exportSegments:pressed {background:#AE5F05; border-color:#AE5F05;}
+QPushButton#exportSegments:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#exportSegments:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Export approved WAVs</string>
+                                </property>
+                              </widget>
+                            </item>
+                          </layout>
+                        </item>
+                        <item>
+                          <widget class="QLabel" name="segmentHint">
+                            <property name="text">
+                              <string />
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QTableWidget" name="segmentTable">
+                            <column>
+                              <property name="text">
+                                <string>ID</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Source start</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Source end</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Clip length</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Label</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Status</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Kind / notes</string>
+                              </property>
+                            </column>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QGroupBox" name="segmentEditor">
+                            <property name="styleSheet">
+                              <string>QGroupBox#segmentEditor { margin-top:0px; padding-top:12px; }</string>
+                            </property>
+                            <property name="title">
+                              <string />
+                            </property>
+                            <layout class="QVBoxLayout" name="segmentEditorLayout">
+                              <item>
+                                <widget class="QLabel" name="segmentEditorHeading">
+                                  <property name="styleSheet">
+                                    <string>font-size:20px; font-weight:700; color:#173B40;</string>
+                                  </property>
+                                  <property name="text">
+                                    <string>Review candidates</string>
+                                  </property>
+                                  <property name="wordWrap">
+                                    <bool>true</bool>
+                                  </property>
+                                </widget>
+                              </item>
+                              <item>
+                                <layout class="QGridLayout" name="segmentEditRowLayout">
+                                  <item row="0" column="0">
+                                    <widget class="QComboBox" name="segmentLabel">
+                                      <item>
+                                        <property name="text">
+                                          <string>speech</string>
+                                        </property>
+                                      </item>
+                                      <item>
+                                        <property name="text">
+                                          <string>mixed</string>
+                                        </property>
+                                      </item>
+                                      <item>
+                                        <property name="text">
+                                          <string>music</string>
+                                        </property>
+                                      </item>
+                                      <item>
+                                        <property name="text">
+                                          <string>silence</string>
+                                        </property>
+                                      </item>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="1">
+                                    <widget class="QComboBox" name="boundaryMode">
+                                      <item>
+                                        <property name="text">
+                                          <string>Clip-local trim (keeps joins)</string>
+                                        </property>
+                                      </item>
+                                      <item>
+                                        <property name="text">
+                                          <string>Original source times (continuous)</string>
+                                        </property>
+                                      </item>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="2">
+                                    <widget class="QDoubleSpinBox" name="segmentStart">
+                                      <property name="prefix">
+                                        <string>Start: </string>
+                                      </property>
+                                      <property name="suffix">
+                                        <string> s</string>
+                                      </property>
+                                      <property name="decimals">
+                                        <number>4</number>
+                                      </property>
+                                      <property name="minimum">
+                                        <double>0.000000000000000</double>
+                                      </property>
+                                      <property name="maximum">
+                                        <double>999999.000000000000000</double>
+                                      </property>
+                                      <property name="singleStep">
+                                        <double>0.010000000000000</double>
+                                      </property>
+                                      <property name="value">
+                                        <double>0.000000000000000</double>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="3">
+                                    <widget class="QDoubleSpinBox" name="segmentEnd">
+                                      <property name="prefix">
+                                        <string>End: </string>
+                                      </property>
+                                      <property name="suffix">
+                                        <string> s</string>
+                                      </property>
+                                      <property name="decimals">
+                                        <number>4</number>
+                                      </property>
+                                      <property name="minimum">
+                                        <double>0.000000000000000</double>
+                                      </property>
+                                      <property name="maximum">
+                                        <double>999999.000000000000000</double>
+                                      </property>
+                                      <property name="singleStep">
+                                        <double>0.010000000000000</double>
+                                      </property>
+                                      <property name="value">
+                                        <double>0.000000000000000</double>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="1" column="0">
+                                    <widget class="QPushButton" name="applySegment">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#applySegment {background:#D97706; color:#FFFFFF; border:1px solid #D97706; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#applySegment:hover {background:#C36B05; border-color:#C36B05;}
+QPushButton#applySegment:pressed {background:#AE5F05; border-color:#AE5F05;}
+QPushButton#applySegment:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#applySegment:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Apply edit</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                </layout>
+                              </item>
+                              <item>
+                                <layout class="QGridLayout" name="segmentReviewRowLayout">
+                                  <item row="0" column="0">
+                                    <widget class="QPushButton" name="playSegment">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#playSegment {background:#157A6E; color:#FFFFFF; border:1px solid #157A6E; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#playSegment:hover {background:#136E63; border-color:#136E63;}
+QPushButton#playSegment:pressed {background:#116258; border-color:#116258;}
+QPushButton#playSegment:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#playSegment:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Play clip</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="1">
+                                    <widget class="QPushButton" name="playCutStart">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#playCutStart {background:#2563EB; color:#FFFFFF; border:1px solid #2563EB; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#playCutStart:hover {background:#2159D4; border-color:#2159D4;}
+QPushButton#playCutStart:pressed {background:#1E4FBC; border-color:#1E4FBC;}
+QPushButton#playCutStart:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#playCutStart:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Listen at source start</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="2">
+                                    <widget class="QPushButton" name="playCutEnd">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#playCutEnd {background:#4F46E5; color:#FFFFFF; border:1px solid #4F46E5; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#playCutEnd:hover {background:#473FCE; border-color:#473FCE;}
+QPushButton#playCutEnd:pressed {background:#3F38B7; border-color:#3F38B7;}
+QPushButton#playCutEnd:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#playCutEnd:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Listen at source end</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="3">
+                                    <widget class="QPushButton" name="approveSegments">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#approveSegments {background:#15803D; color:#FFFFFF; border:1px solid #15803D; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#approveSegments:hover {background:#137337; border-color:#137337;}
+QPushButton#approveSegments:pressed {background:#116631; border-color:#116631;}
+QPushButton#approveSegments:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#approveSegments:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Approve selected</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="1" column="0">
+                                    <widget class="QPushButton" name="excludeSegments">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#excludeSegments {background:#C83E3B; color:#FFFFFF; border:1px solid #C83E3B; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#excludeSegments:hover {background:#B43835; border-color:#B43835;}
+QPushButton#excludeSegments:pressed {background:#A0322F; border-color:#A0322F;}
+QPushButton#excludeSegments:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#excludeSegments:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Exclude selected</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="1" column="1">
+                                    <widget class="QPushButton" name="resolveOverlaps">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#resolveOverlaps {background:#475569; color:#FFFFFF; border:1px solid #475569; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#resolveOverlaps:hover {background:#404C5E; border-color:#404C5E;}
+QPushButton#resolveOverlaps:pressed {background:#394454; border-color:#394454;}
+QPushButton#resolveOverlaps:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#resolveOverlaps:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Resolve approved overlaps</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                </layout>
+                              </item>
+                            </layout>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QLabel" name="unresolvedHeading">
+                            <property name="text">
+                              <string>Unresolved spans and uncovered gaps · select and listen to preserve missed speech</string>
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QTableWidget" name="unresolvedTable">
+                            <column>
+                              <property name="text">
+                                <string>ID</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Start (s)</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>End (s)</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Label</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Status</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Reason</string>
+                              </property>
+                            </column>
+                          </widget>
+                        </item>
+                        <item>
+                          <layout class="QGridLayout" name="unresolvedActionsLayout">
+                            <item row="0" column="0">
+                              <widget class="QComboBox" name="unresolvedLabel">
+                                <item>
+                                  <property name="text">
+                                    <string>speech</string>
+                                  </property>
+                                </item>
+                                <item>
+                                  <property name="text">
+                                    <string>mixed</string>
+                                  </property>
+                                </item>
+                                <item>
+                                  <property name="text">
+                                    <string>music</string>
+                                  </property>
+                                </item>
+                                <item>
+                                  <property name="text">
+                                    <string>silence</string>
+                                  </property>
+                                </item>
+                              </widget>
+                            </item>
+                            <item row="0" column="1">
+                              <widget class="QDoubleSpinBox" name="unresolvedStart">
+                                <property name="prefix">
+                                  <string>Start: </string>
+                                </property>
+                                <property name="suffix">
+                                  <string> s</string>
+                                </property>
+                                <property name="decimals">
+                                  <number>4</number>
+                                </property>
+                                <property name="minimum">
+                                  <double>0.000000000000000</double>
+                                </property>
+                                <property name="maximum">
+                                  <double>999999.000000000000000</double>
+                                </property>
+                                <property name="singleStep">
+                                  <double>0.010000000000000</double>
+                                </property>
+                                <property name="value">
+                                  <double>0.000000000000000</double>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="0" column="2">
+                              <widget class="QDoubleSpinBox" name="unresolvedEnd">
+                                <property name="prefix">
+                                  <string>End: </string>
+                                </property>
+                                <property name="suffix">
+                                  <string> s</string>
+                                </property>
+                                <property name="decimals">
+                                  <number>4</number>
+                                </property>
+                                <property name="minimum">
+                                  <double>0.000000000000000</double>
+                                </property>
+                                <property name="maximum">
+                                  <double>999999.000000000000000</double>
+                                </property>
+                                <property name="singleStep">
+                                  <double>0.010000000000000</double>
+                                </property>
+                                <property name="value">
+                                  <double>0.000000000000000</double>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="0" column="3">
+                              <widget class="QPushButton" name="playUnresolved">
+                                <property name="styleSheet">
+                                  <string>QPushButton#playUnresolved {background:#1E607A; color:#FFFFFF; border:1px solid #1E607A; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#playUnresolved:hover {background:#1B566E; border-color:#1B566E;}
+QPushButton#playUnresolved:pressed {background:#184D62; border-color:#184D62;}
+QPushButton#playUnresolved:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#playUnresolved:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Play span</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="1" column="0">
+                              <widget class="QPushButton" name="addManualClip">
+                                <property name="styleSheet">
+                                  <string>QPushButton#addManualClip {background:#7C3AED; color:#FFFFFF; border:1px solid #7C3AED; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#addManualClip:hover {background:#7034D5; border-color:#7034D5;}
+QPushButton#addManualClip:pressed {background:#632EBE; border-color:#632EBE;}
+QPushButton#addManualClip:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#addManualClip:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Add 5–15 s clip</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="1" column="1">
+                              <widget class="QPushButton" name="markUnresolved">
+                                <property name="styleSheet">
+                                  <string>QPushButton#markUnresolved {background:#D97706; color:#FFFFFF; border:1px solid #D97706; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#markUnresolved:hover {background:#C36B05; border-color:#C36B05;}
+QPushButton#markUnresolved:pressed {background:#AE5F05; border-color:#AE5F05;}
+QPushButton#markUnresolved:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#markUnresolved:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Label + mark reviewed</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="1" column="2">
+                              <widget class="QPushButton" name="goQuality">
+                                <property name="styleSheet">
+                                  <string>QPushButton#goQuality {background:#0F766E; color:#FFFFFF; border:1px solid #0F766E; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#goQuality:hover {background:#0E6A63; border-color:#0E6A63;}
+QPushButton#goQuality:pressed {background:#0C5E58; border-color:#0C5E58;}
+QPushButton#goQuality:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#goQuality:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Continue to SNR →</string>
+                                </property>
+                              </widget>
+                            </item>
+                          </layout>
+                        </item>
+                      </layout>
+                    </widget>
+                    <widget class="QWidget" name="qualityPage">
+                      <layout class="QVBoxLayout" name="qualityWorkspaceLayout">
+                        <item>
+                          <widget class="QLabel" name="qualityTitle">
+                            <property name="styleSheet">
+                              <string>font-size:24px; font-weight:600;</string>
+                            </property>
+                            <property name="text">
+                              <string>Audio Quality SNR</string>
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <layout class="QGridLayout" name="qualityActionsLayout">
+                            <item row="0" column="0">
+                              <widget class="QLabel" name="thresholdLabel">
+                                <property name="text">
+                                  <string>Clean threshold (dB)</string>
+                                </property>
+                                <property name="wordWrap">
+                                  <bool>true</bool>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="0" column="1">
+                              <widget class="QDoubleSpinBox" name="snrThreshold">
+                                <property name="decimals">
+                                  <number>4</number>
+                                </property>
+                                <property name="minimum">
+                                  <double>-50.000000000000000</double>
+                                </property>
+                                <property name="maximum">
+                                  <double>100.000000000000000</double>
+                                </property>
+                                <property name="singleStep">
+                                  <double>1.000000000000000</double>
+                                </property>
+                                <property name="value">
+                                  <double>20.000000000000000</double>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="0" column="2">
+                              <widget class="QPushButton" name="calculateSNR">
+                                <property name="styleSheet">
+                                  <string>QPushButton#calculateSNR {background:#0F766E; color:#FFFFFF; border:1px solid #0F766E; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#calculateSNR:hover {background:#0E6A63; border-color:#0E6A63;}
+QPushButton#calculateSNR:pressed {background:#0C5E58; border-color:#0C5E58;}
+QPushButton#calculateSNR:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#calculateSNR:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Calculate SNR</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="0" column="3">
+                              <widget class="QPushButton" name="openSNR">
+                                <property name="styleSheet">
+                                  <string>QPushButton#openSNR {background:#2563EB; color:#FFFFFF; border:1px solid #2563EB; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#openSNR:hover {background:#2159D4; border-color:#2159D4;}
+QPushButton#openSNR:pressed {background:#1E4FBC; border-color:#1E4FBC;}
+QPushButton#openSNR:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#openSNR:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Open SNR review</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="1" column="0">
+                              <widget class="QPushButton" name="saveSNR">
+                                <property name="styleSheet">
+                                  <string>QPushButton#saveSNR {background:#D97706; color:#FFFFFF; border:1px solid #D97706; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#saveSNR:hover {background:#C36B05; border-color:#C36B05;}
+QPushButton#saveSNR:pressed {background:#AE5F05; border-color:#AE5F05;}
+QPushButton#saveSNR:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#saveSNR:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Save HTML / CSV / JSON</string>
+                                </property>
+                              </widget>
+                            </item>
+                            <item row="1" column="1">
+                              <widget class="QPushButton" name="openSNRReport">
+                                <property name="styleSheet">
+                                  <string>QPushButton#openSNRReport {background:#7C3AED; color:#FFFFFF; border:1px solid #7C3AED; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#openSNRReport:hover {background:#7034D5; border-color:#7034D5;}
+QPushButton#openSNRReport:pressed {background:#632EBE; border-color:#632EBE;}
+QPushButton#openSNRReport:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#openSNRReport:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                </property>
+                                <property name="text">
+                                  <string>Open report</string>
+                                </property>
+                              </widget>
+                            </item>
+                          </layout>
+                        </item>
+                        <item>
+                          <widget class="QLabel" name="snrNotice">
+                            <property name="text">
+                              <string />
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QTableWidget" name="snrTable">
+                            <column>
+                              <property name="text">
+                                <string>ID</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Source start</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Source end</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Content</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Energy SNR (dB)</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Automatic</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Reviewed quality</string>
+                              </property>
+                            </column>
+                            <column>
+                              <property name="text">
+                                <string>Notes</string>
+                              </property>
+                            </column>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QGroupBox" name="overrideGroup">
+                            <property name="title">
+                              <string />
+                            </property>
+                            <layout class="QVBoxLayout" name="overrideGroupLayout">
+                              <item>
+                                <layout class="QGridLayout" name="qualityOverrideRowLayout">
+                                  <item row="0" column="0">
+                                    <widget class="QLineEdit" name="overrideReason">
+                                      <property name="placeholderText">
+                                        <string>Reason for the correction</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="1">
+                                    <widget class="QPushButton" name="markClean">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#markClean {background:#15803D; color:#FFFFFF; border:1px solid #15803D; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#markClean:hover {background:#137337; border-color:#137337;}
+QPushButton#markClean:pressed {background:#116631; border-color:#116631;}
+QPushButton#markClean:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#markClean:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Mark clean</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="2">
+                                    <widget class="QPushButton" name="markNoisy">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#markNoisy {background:#C83E3B; color:#FFFFFF; border:1px solid #C83E3B; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#markNoisy:hover {background:#B43835; border-color:#B43835;}
+QPushButton#markNoisy:pressed {background:#A0322F; border-color:#A0322F;}
+QPushButton#markNoisy:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#markNoisy:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Mark noisy</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="0" column="3">
+                                    <widget class="QPushButton" name="restoreQuality">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#restoreQuality {background:#3B5998; color:#FFFFFF; border:1px solid #3B5998; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#restoreQuality:hover {background:#355089; border-color:#355089;}
+QPushButton#restoreQuality:pressed {background:#2F477A; border-color:#2F477A;}
+QPushButton#restoreQuality:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#restoreQuality:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Restore automatic</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                  <item row="1" column="0">
+                                    <widget class="QPushButton" name="playQuality">
+                                      <property name="styleSheet">
+                                        <string>QPushButton#playQuality {background:#157A6E; color:#FFFFFF; border:1px solid #157A6E; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#playQuality:hover {background:#136E63; border-color:#136E63;}
+QPushButton#playQuality:pressed {background:#116258; border-color:#116258;}
+QPushButton#playQuality:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                      </property>
+                                      <property name="text">
+                                        <string>Play selected clip</string>
+                                      </property>
+                                    </widget>
+                                  </item>
+                                </layout>
+                              </item>
+                            </layout>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QWidget" name="snrChartHost">
+                            <property name="minimumSize">
+                              <size>
+                                <width>0</width>
+                                <height>240</height>
+                              </size>
+                            </property>
+                            <layout class="QVBoxLayout" name="histogramLayout" />
+                          </widget>
+                        </item>
+                      </layout>
+                    </widget>
+                    <widget class="QWidget" name="transcriptionPage">
+                      <layout class="QVBoxLayout" name="transcriptionPageLayout">
+                        <property name="spacing">
+                          <number>18</number>
+                        </property>
+                        <property name="leftMargin">
+                          <number>24</number>
+                        </property>
+                        <property name="topMargin">
+                          <number>24</number>
+                        </property>
+                        <property name="rightMargin">
+                          <number>24</number>
+                        </property>
+                        <property name="bottomMargin">
+                          <number>24</number>
+                        </property>
+                        <item>
+                          <widget class="QLabel" name="transcriptionHeading">
+                            <property name="styleSheet">
+                              <string>font-size:30px; font-weight:700;</string>
+                            </property>
+                            <property name="text">
+                              <string>Transcription</string>
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QFrame" name="transcriptionCard">
+                            <property name="styleSheet">
+                              <string>QFrame#transcriptionCard {background:#FFFFFF; border:1px solid #DDE6E8; border-radius:10px;}</string>
+                            </property>
+                            <layout class="QVBoxLayout" name="transcriptionCardLayout">
+                              <property name="spacing">
+                                <number>10</number>
+                              </property>
+                              <property name="leftMargin">
+                                <number>16</number>
+                              </property>
+                              <property name="topMargin">
+                                <number>16</number>
+                              </property>
+                              <property name="rightMargin">
+                                <number>16</number>
+                              </property>
+                              <property name="bottomMargin">
+                                <number>16</number>
+                              </property>
+                              <item>
+                                <widget class="QLabel" name="transcriptionCardTitle">
+                                  <property name="styleSheet">
+                                    <string>font-size:19px; font-weight:600;</string>
+                                  </property>
+                                  <property name="text">
+                                    <string>Transcription</string>
+                                  </property>
+                                  <property name="wordWrap">
+                                    <bool>true</bool>
+                                  </property>
+                                </widget>
+                              </item>
+                              <item>
+                                <widget class="QLabel" name="transcriptionPlaceholder">
+                                  <property name="styleSheet">
+                                    <string>color:#60767A;</string>
+                                  </property>
+                                  <property name="text">
+                                    <string>Add your transcription controls here.</string>
+                                  </property>
+                                  <property name="wordWrap">
+                                    <bool>true</bool>
+                                  </property>
+                                </widget>
+                              </item>
+                            </layout>
+                          </widget>
+                        </item>
+                        <item>
+                          <spacer name="transcriptionSpacer">
+                            <property name="orientation">
+                              <enum>Qt::Orientation::Vertical</enum>
+                            </property>
+                            <property name="sizeHint" stdset="0">
+                              <size>
+                                <width>20</width>
+                                <height>40</height>
+                              </size>
+                            </property>
+                          </spacer>
+                        </item>
+                      </layout>
+                    </widget>
+                    <widget class="QWidget" name="reviewPage">
+                      <layout class="QVBoxLayout" name="reviewPageLayout">
+                        <property name="spacing">
+                          <number>18</number>
+                        </property>
+                        <property name="leftMargin">
+                          <number>24</number>
+                        </property>
+                        <property name="topMargin">
+                          <number>24</number>
+                        </property>
+                        <property name="rightMargin">
+                          <number>24</number>
+                        </property>
+                        <property name="bottomMargin">
+                          <number>24</number>
+                        </property>
+                        <item>
+                          <widget class="QLabel" name="reviewHeading">
+                            <property name="styleSheet">
+                              <string>font-size:30px; font-weight:700;</string>
+                            </property>
+                            <property name="text">
+                              <string>Review &amp; Export</string>
+                            </property>
+                            <property name="wordWrap">
+                              <bool>true</bool>
+                            </property>
+                          </widget>
+                        </item>
+                        <item>
+                          <widget class="QFrame" name="reviewCard">
+                            <property name="styleSheet">
+                              <string>QFrame#reviewCard {background:#FFFFFF; border:1px solid #DDE6E8; border-radius:10px;}</string>
+                            </property>
+                            <layout class="QVBoxLayout" name="reviewCardLayout">
+                              <property name="spacing">
+                                <number>10</number>
+                              </property>
+                              <property name="leftMargin">
+                                <number>16</number>
+                              </property>
+                              <property name="topMargin">
+                                <number>16</number>
+                              </property>
+                              <property name="rightMargin">
+                                <number>16</number>
+                              </property>
+                              <property name="bottomMargin">
+                                <number>16</number>
+                              </property>
+                              <item>
+                                <widget class="QLabel" name="reviewCardTitle">
+                                  <property name="styleSheet">
+                                    <string>font-size:19px; font-weight:600;</string>
+                                  </property>
+                                  <property name="text">
+                                    <string>Review &amp; Export</string>
+                                  </property>
+                                  <property name="wordWrap">
+                                    <bool>true</bool>
+                                  </property>
+                                </widget>
+                              </item>
+                              <item>
+                                <widget class="QLabel" name="reviewPlaceholder">
+                                  <property name="styleSheet">
+                                    <string>color:#60767A;</string>
+                                  </property>
+                                  <property name="text">
+                                    <string>Add your review &amp; export controls here.</string>
+                                  </property>
+                                  <property name="wordWrap">
+                                    <bool>true</bool>
+                                  </property>
+                                </widget>
+                              </item>
+                            </layout>
+                          </widget>
+                        </item>
+                        <item>
+                          <spacer name="reviewSpacer">
+                            <property name="orientation">
+                              <enum>Qt::Orientation::Vertical</enum>
+                            </property>
+                            <property name="sizeHint" stdset="0">
+                              <size>
+                                <width>20</width>
+                                <height>40</height>
+                              </size>
+                            </property>
+                          </spacer>
+                        </item>
+                      </layout>
+                    </widget>
+                  </widget>
+                </item>
+                <item>
+                  <widget class="QWidget" name="processingStatusFrame">
+                    <property name="visible">
+                      <bool>false</bool>
+                    </property>
+                    <layout class="QVBoxLayout" name="processingStatusLayout">
+                      <property name="leftMargin">
+                        <number>20</number>
+                      </property>
+                      <property name="rightMargin">
+                        <number>20</number>
+                      </property>
+                      <property name="topMargin">
+                        <number>10</number>
+                      </property>
+                      <property name="bottomMargin">
+                        <number>0</number>
+                      </property>
+                      <item>
+                        <layout class="QHBoxLayout" name="processingStatusRowLayout">
+                          <item>
+                            <widget class="QLabel" name="processingStatus">
+                              <property name="text">
+                                <string>Choose a WAV or extract audio on Source &amp; Audio.</string>
+                              </property>
+                              <property name="wordWrap">
+                                <bool>true</bool>
+                              </property>
+                            </widget>
+                          </item>
+                          <item>
+                            <widget class="QProgressBar" name="processingProgress">
+                              <property name="value">
+                                <number>0</number>
+                              </property>
+                              <property name="textVisible">
+                                <bool>false</bool>
+                              </property>
+                            </widget>
+                          </item>
+                        </layout>
+                      </item>
+                    </layout>
+                  </widget>
+                </item>
+              </layout>
+            </widget>
+          </widget>
+        </item>
+      </layout>
+    </widget>
+    <widget class="QStatusBar" name="statusbar" />
+  </widget>
+  <tabstops>
+    <tabstop>navigationList</tabstop>
+    <tabstop>urlInput</tabstop>
+    <tabstop>outputFolderInput</tabstop>
+    <tabstop>browseOutputButton</tabstop>
+    <tabstop>folderNameInput</tabstop>
+    <tabstop>downloadButton</tabstop>
+    <tabstop>videoPathInput</tabstop>
+    <tabstop>chooseVideoButton</tabstop>
+    <tabstop>extractButton</tabstop>
+    <tabstop>activityLog</tabstop>
+    <tabstop>renameFolderButton</tabstop>
+    <tabstop>openReportButton</tabstop>
+    <tabstop>openOutputFolderButton</tabstop>
+  </tabstops>
+  <resources />
+  <connections>
+    <connection>
+      <sender>navigationList</sender>
+      <signal>currentRowChanged(int)</signal>
+      <receiver>pages</receiver>
+      <slot>setCurrentIndex(int)</slot>
+      <hints>
+        <hint type="sourcelabel">
+          <x>20</x>
+          <y>20</y>
+        </hint>
+        <hint type="destinationlabel">
+          <x>20</x>
+          <y>20</y>
+        </hint>
+      </hints>
+    </connection>
+  </connections>
+</ui>

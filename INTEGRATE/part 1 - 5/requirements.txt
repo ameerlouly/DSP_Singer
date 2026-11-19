@@ -1,0 +1,11 @@
+PyQt6>=6.6,<7
+psutil>=5.9,<8
+yt-dlp[default]
+numpy>=1.26,<3
+scipy>=1.11,<2
+matplotlib>=3.8,<4
+soundfile>=0.12,<1
+torch>=2.2,<3
+torchaudio>=2.2,<3
+panns-inference==0.1.1
+silero-vad>=5.1,<7
