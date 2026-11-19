@@ -3,12 +3,13 @@ from pathlib import Path
 from datetime import datetime, timezone
 import argparse
 import json
+import math
 import re
 import shutil
 import subprocess
 import wave
 from urllib.parse import urlparse
-from html import escape
+from html import escape, unescape
 
 
 def require_tools():
@@ -98,6 +99,9 @@ def save_html(path, data):
         'channel': 'Channel',
         'duration_seconds': 'Duration (seconds)',
         'license': 'License',
+        'license_status': 'License verification status',
+        'license_evidence': 'License evidence / notes',
+        'license_verified_at_utc': 'License checked at (UTC)',
         'downloaded_at_utc': 'Downloaded at (UTC)',
         'verified_at_utc': 'Verified at (UTC)',
         'video_file': 'Video file',
@@ -428,6 +432,90 @@ def save_html(path, data):
     temp.write_text(page, encoding='utf-8')
     temp.replace(path)
 
+
+def save_metadata_json(path, data):
+    """Save a machine-readable copy so the license can be reviewed later."""
+    path = Path(path)
+    temporary = path.with_suffix('.json.tmp')
+    temporary.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    temporary.replace(path)
+
+
+def license_fields(info, manual_license=None, license_evidence=None):
+    """Never infer reuse rights when the site's license field is missing."""
+    if manual_license is not None:
+        manual_license = manual_license.strip()
+        if not manual_license:
+            raise ValueError('The manually entered license cannot be empty.')
+        return {
+            'license': manual_license,
+            'license_status': 'Manually entered after source review (not independently validated)',
+            'license_evidence': (license_evidence or 'User checked the original video page').strip(),
+            'license_verified_at_utc': datetime.now(timezone.utc).isoformat(),
+        }
+
+    extracted = info.get('license')
+    if isinstance(extracted, str) and extracted.strip():
+        return {
+            'license': extracted.strip(),
+            'license_status': 'Provided by the website through yt-dlp',
+            'license_evidence': 'yt-dlp metadata field: license',
+        }
+
+    return {
+        'license': 'Not reported — manual verification required',
+        'license_status': 'Unverified',
+        'license_evidence': 'Check the source video page or request permission from its owner',
+    }
+
+
+def recover_legacy_html_metadata(report_path):
+    """Read the original pipeline's HTML table, so old downloads need no re-download."""
+    page = Path(report_path).read_text(encoding='utf-8')
+    key_by_label = {
+        'Submitted link': 'input_url',
+        'Original video link': 'source_url',
+        'Video ID': 'video_id',
+        'Title': 'title',
+        'Channel': 'channel',
+        'Duration (seconds)': 'duration_seconds',
+        'License': 'license',
+        'Downloaded at (UTC)': 'downloaded_at_utc',
+        'Video file': 'video_file',
+    }
+    record = {}
+    for label, raw_value in re.findall(
+            r'<tr>\s*<th scope="row">(.*?)</th>\s*<td[^>]*>(.*?)</td>\s*</tr>',
+            page, flags=re.DOTALL):
+        label = unescape(re.sub(r'<[^>]*>', '', label)).strip()
+        if label in key_by_label:
+            value = unescape(re.sub(r'<[^>]*>', '', raw_value)).strip()
+            record[key_by_label[label]] = value
+    if not record.get('source_url'):
+        raise ValueError('Cannot recover source information from the legacy metadata.html file.')
+    return record
+
+
+def update_license(video_folder, license_name, evidence_note=None, log=print):
+    """Record a manual license review without downloading the video again."""
+    folder = Path(video_folder)
+    record_path = folder / 'metadata.json'
+    if record_path.is_file():
+        data = json.loads(record_path.read_text(encoding='utf-8'))
+    elif (folder / 'metadata.html').is_file():
+        data = recover_legacy_html_metadata(folder / 'metadata.html')
+    else:
+        raise FileNotFoundError(f'No metadata.json or metadata.html exists in {folder}')
+    if not isinstance(data, dict) or 'source_url' not in data:
+        raise ValueError('This folder has invalid video metadata.')
+    data.update(license_fields({}, license_name, evidence_note))
+    save_metadata_json(record_path, data)
+    save_html(folder / 'metadata.html', data)
+    log(f'License recorded: {data["license"]}')
+    log(f'Regenerated: {folder / "metadata.html"}')
+    return data
+
+
 def probe(path):
     result = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_format',
                              '-of', 'json', str(path)], capture_output=True, text=True,
@@ -506,7 +594,133 @@ def rename_video_folder(folder, new_name):
     return folder.rename(destination)
 
 
-def download_video(url, output_root='data', log=print, *, folder_name=None):
+class DownloadProgress:
+    """Track combined video/audio bytes, marking estimated totals explicitly."""
+
+    def __init__(self, info, callback, details_callback=None):
+        formats = info.get('requested_formats') or [info]
+        self.totals = {}
+        self.estimated = {}
+        self.downloaded = {}
+        self.finished = set()
+        self.callback = callback
+        self.details_callback = details_callback
+        self.last_value = -1
+        self.last_reported = None
+        for index, stream in enumerate(formats):
+            ident = str(stream.get('format_id', index))
+            size = self.positive(stream.get('filesize'))
+            estimated = False
+            if size is None:
+                size = self.positive(stream.get('filesize_approx'))
+                estimated = size is not None
+            if size is None:
+                rate = self.positive(stream.get('tbr'))
+                duration = self.positive(stream.get('duration') or info.get('duration'))
+                if rate is not None and duration is not None:
+                    size = rate * 1000 / 8 * duration
+                    estimated = True
+            self.totals[ident] = size
+            self.estimated[ident] = estimated
+            self.downloaded[ident] = 0
+
+    @staticmethod
+    def positive(value):
+        try:
+            number = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return None
+        return number if math.isfinite(number) and number > 0 else None
+
+    def report(self, value):
+        # Estimates can change as HTTP headers/fragment sizes become available.
+        # A corrected percentage may decrease rather than hiding that correction.
+        if value != self.last_reported:
+            self.last_reported = value
+            if value >= 0:
+                self.last_value = value
+            if self.callback is not None:
+                self.callback(value)
+        if value == 100:
+            self.publish('complete')
+
+    def publish(self, state):
+        known = all(size is not None for size in self.totals.values())
+        if self.details_callback is not None:
+            self.details_callback({
+                'state': state,
+                'downloaded_bytes': int(sum(self.downloaded.values())),
+                'total_bytes': int(sum(self.totals.values())) if known else None,
+                'total_is_estimate': known and any(self.estimated.values()),
+            })
+
+    def finishing(self):
+        self.report(-1)
+        self.publish('finishing')
+
+    def __call__(self, event):
+        status = event.get('status')
+        if status not in ('downloading', 'finished'):
+            return
+        info = event.get('info_dict', {})
+        ident = str(info.get('format_id', ''))
+        if ident not in self.totals:
+            if len(self.totals) == 1:
+                ident = next(iter(self.totals))
+            else:
+                self.report(-1)
+                self.publish('transferring')
+                return
+        count = event.get('downloaded_bytes')
+        if count == 0:
+            self.downloaded[ident] = 0
+        elif self.positive(count) is not None:
+            self.downloaded[ident] = int(count)
+        exact = self.positive(event.get('total_bytes'))
+        estimate = self.positive(event.get('total_bytes_estimate'))
+        if exact is not None:
+            self.totals[ident], self.estimated[ident] = exact, False
+        elif estimate is not None and (self.totals[ident] is None or self.estimated[ident]):
+            self.totals[ident], self.estimated[ident] = estimate, True
+        if status == 'finished':
+            self.finished.add(ident)
+            # Successful completion gives the actual final transfer size.
+            size = self.positive(event.get('downloaded_bytes'))
+            if size is None and event.get('filename'):
+                try:
+                    size = self.positive(Path(event['filename']).stat().st_size)
+                except OSError:
+                    pass
+            if size is None and not self.estimated[ident]:
+                size = self.totals[ident]
+            if size is not None:
+                self.totals[ident], self.downloaded[ident], self.estimated[ident] = size, int(size), False
+        if all(size is not None for size in self.totals.values()):
+            total = sum(self.totals.values())
+            downloaded = sum(self.downloaded.values())
+            # Completion also requires successful merging, validation and reports.
+            self.report(min(99, int(100 * downloaded / total)))
+        else:
+            # No denominator means no honest overall percentage is available.
+            self.report(-1)
+        self.publish('transferring')
+        if len(self.finished) == len(self.totals):
+            self.finishing()
+
+    def postprocess(self, event):
+        if event.get('status') == 'started':
+            self.finishing()
+
+
+def download_video(url, output_root='data', log=print, *, folder_name=None,
+                   manual_license=None, license_evidence=None, progress_callback=None,
+                   progress_details_callback=None):
+    """Download a source; report byte-weighted progress and optional size details.
+
+    progress_callback receives -1 when an overall percentage is unavailable or
+    processing continues, otherwise 0..99; 100 follows successful validation.
+    progress_details_callback receives byte counts, estimate flag and stage.
+    """
     require_tools()
     url = url.strip()
     parsed = urlparse(url)
@@ -516,37 +730,43 @@ def download_video(url, output_root='data', log=print, *, folder_name=None):
         import yt_dlp
     except ImportError as exc:
         raise RuntimeError('Install dependencies: python -m pip install -r requirements.txt') from exc
-    folder = create_video_folder(output_root, folder_name)
-    log(f'Output folder: {folder}')
-    last_percent = [-1]
-
-    def progress(event):
-        if event['status'] == 'downloading':
-            total = event.get('total_bytes') or event.get('total_bytes_estimate')
-            if total:
-                percent = int(100 * event.get('downloaded_bytes', 0) / total)
-                if percent // 10 != last_percent[0] // 10:
-                    log(f'Download: {percent}%')
-                    last_percent[0] = percent
-        elif event['status'] == 'finished':
-            log('Stream downloaded; completing media processing...')
-
+    hooks = []
     options = {
         'format': 'bv*+ba/b',
-        'outtmpl': str(folder / 'source.%(ext)s'),
+        'outtmpl': 'source.%(ext)s',
         'merge_output_format': 'mkv',
         'noplaylist': True,
         'quiet': True,
-        'progress_hooks': [progress],
+        'progress_hooks': hooks,
+        'noprogress': True,
         'retries': 3,
         'socket_timeout': 30,
         'match_filter': lambda info, *, incomplete=False: (
             'Live streams are not supported; choose a finished video.'
             if info.get('is_live') else None),
     }
-    log('Downloading video (this can take several minutes)...')
+    if progress_callback is not None:
+        progress_callback(-1)
+    if progress_details_callback is not None:
+        progress_details_callback(dict(state='reading', downloaded_bytes=0, total_bytes=None, total_is_estimate=False))
+    log('Reading video information...')
     with yt_dlp.YoutubeDL(options) as downloader:
-        info = downloader.extract_info(url, download=True)
+        info = downloader.extract_info(url, download=False)
+        if not info or info.get('_type') in ('playlist', 'multi_video'):
+            raise ValueError('Use a single, finished video URL, not a playlist.')
+        if info.get('is_live'):
+            raise ValueError('Choose a finished video instead of a live stream.')
+        folder = create_video_folder(output_root, folder_name)
+        log(f'Output folder: {folder}')
+        # Configure the destination only after metadata validation succeeds.
+        downloader.params['outtmpl']['default'] = str(folder / 'source.%(ext)s')
+        progress = DownloadProgress(info, progress_callback, progress_details_callback)
+        downloader.add_progress_hook(progress)
+        downloader.add_postprocessor_hook(progress.postprocess)
+        progress.report(0)
+        log('Downloading selected video and audio streams...')
+        info = downloader.process_ie_result(info, download=True)
+    progress.finishing()
     if not info or info.get('_type') in ('playlist', 'multi_video'):
         raise ValueError('Use a single, finished video URL, not a playlist.')
     candidates = [p for p in folder.glob('source.*')
@@ -564,15 +784,19 @@ def download_video(url, output_root='data', log=print, *, folder_name=None):
         'video_id': info.get('id'), 'title': info.get('title'),
         'channel': info.get('channel') or info.get('uploader'),
         'duration_seconds': info.get('duration'),
-        'license': info.get('license') or 'Unknown / not reported by source',
+        **license_fields(info, manual_license, license_evidence),
         'downloaded_at_utc': datetime.now(timezone.utc).isoformat(),
         'video_file': video.name,
     }
+    save_metadata_json(folder / 'metadata.json', metadata)
     save_html(folder / 'metadata.html', metadata)
     log(f'Saved video: {video}')
     log(f'License: {metadata["license"]}')
+    if metadata['license_status'] == 'Unverified':
+        log('WARNING: The license was not provided by the source. Manually check the video before using it in the final corpus.')
     if (metadata['duration_seconds'] or 0) < 3600:
         log('Note: this is fine for testing; final project videos must each be at least one hour.')
+    progress.report(100)
     return video
 
 
@@ -622,13 +846,31 @@ if __name__ == '__main__':
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--url', help='Download a video and extract its audio')
     group.add_argument('--video', help='Extract audio from an existing local video')
+    group.add_argument('--verify-license', metavar='FOLDER',
+                       help='Record a manually checked license for an existing download folder')
     parser.add_argument('--output', default='data', help='Download folder')
     parser.add_argument('--folder-name', help='Custom subfolder name for a URL download')
+    parser.add_argument('--license-name',
+                        help='License copied after checking the original video page')
+    parser.add_argument('--license-evidence',
+                        help='Notes or a link showing where the license was checked')
     args = parser.parse_args()
-    if args.video and args.folder_name is not None:
+    if not args.url and args.folder_name is not None:
         parser.error('--folder-name applies only to --url')
+    if args.video and (args.license_name or args.license_evidence):
+        parser.error('--license-name and --license-evidence apply only to --url or --verify-license')
+    if args.verify_license and not args.license_name:
+        parser.error('--verify-license requires --license-name')
+    if args.license_evidence and not args.license_name:
+        parser.error('--license-evidence requires --license-name')
     try:
-        video = download_video(args.url, args.output, folder_name=args.folder_name) if args.url else args.video
-        extract_audio(video)
+        if args.verify_license:
+            update_license(args.verify_license, args.license_name, args.license_evidence)
+        else:
+            video = (download_video(args.url, args.output, folder_name=args.folder_name,
+                                   manual_license=args.license_name,
+                                   license_evidence=args.license_evidence)
+                     if args.url else args.video)
+            extract_audio(video)
     except Exception as exc:
         parser.exit(1, f'Error: {exc}\n')
