@@ -1,0 +1,7 @@
+numpy
+scipy
+soundfile
+sounddevice
+faster-whisper
+jiwer
+PySide6>=6.6
