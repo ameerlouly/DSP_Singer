@@ -1,0 +1,12 @@
+numpy
+scipy
+soundfile
+sounddevice
+matplotlib
+yt-dlp
+imageio-ffmpeg
+jiwer
+faster-whisper
+# Optional MMS ASR:
+torch
+transformers

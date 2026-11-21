@@ -1,0 +1,5 @@
+﻿segment_id,start,end,duration,label,confidence,snr_db,clean_noisy,transcript_a,transcript_b,final_transcript,status,cer,word_difference,human_override,updated_by,updated_at
+seg_0001,1243.0,1255.61,12.61,mixed,0.721,13.29,noisy,,ننننننلهل,,needs_review,9.0,1,False,,
+seg_0002,1255.61,1267.0,11.39,mixed,0.721,9.75,noisy,,تأاب متت ماكه كيكوم خير على رتربكه م مد مت نتعان,,difficult,48.0,11,False,,
+seg_0003,1746.0,1758.46,12.46,mixed,0.542,7.11,noisy,,لتخد ل مطللعذاإذمم أنما اكمانة,,difficult,30.0,5,False,,
+seg_0004,1758.46,1770.81,12.35,mixed,0.542,3.69,noisy,,لالا إي نا نلا كلم أألااللخيللا الملا ناللللا,,difficult,45.0,8,False,,

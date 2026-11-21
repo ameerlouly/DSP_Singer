@@ -1,0 +1,11 @@
+Ameer/.venv/
+Ameer/myenv/
+Ameer/__pycache__/
+ASRDemo/Include/
+ASRDemo/Lib/
+ASRDemo/Scripts/
+ASRDemo/pyvenv.cfg
+ASRDemo/__pycache__/
+full implementation/.venv/
+full implementation/data/*/source.mp4
+full implementation/data/*/source_16k_mono.wav
