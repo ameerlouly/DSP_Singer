@@ -1,0 +1,86 @@
+[
+  {
+    "file": "sb01_00dB_Music.sph",
+    "samples": 80000,
+    "reference_db": 4.0,
+    "python_db": 4.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb01_00dB_White.sph",
+    "samples": 80000,
+    "reference_db": 1.0,
+    "python_db": 1.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb01_10dB_Music.sph",
+    "samples": 80000,
+    "reference_db": 12.0,
+    "python_db": 12.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb01_10dB_White.sph",
+    "samples": 80000,
+    "reference_db": 11.0,
+    "python_db": 11.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb01_20dB_Music.sph",
+    "samples": 80000,
+    "reference_db": 21.0,
+    "python_db": 21.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb01_Clean.sph",
+    "samples": 80000,
+    "reference_db": 33.0,
+    "python_db": 33.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb02_00dB_Music.sph",
+    "samples": 80000,
+    "reference_db": 2.0,
+    "python_db": 2.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb02_00dB_White.sph",
+    "samples": 80000,
+    "reference_db": 0.0,
+    "python_db": 0.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb02_10dB_Music.sph",
+    "samples": 80000,
+    "reference_db": 11.0,
+    "python_db": 11.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb02_10dB_White.sph",
+    "samples": 80000,
+    "reference_db": 10.0,
+    "python_db": 10.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb02_20dB_Music.sph",
+    "samples": 80000,
+    "reference_db": 18.0,
+    "python_db": 18.0,
+    "status": "ok"
+  },
+  {
+    "file": "sb02_Clean.sph",
+    "samples": 80000,
+    "reference_db": 33.0,
+    "python_db": 33.0,
+    "status": "ok"
+  }
+]

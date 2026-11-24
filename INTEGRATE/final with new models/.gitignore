@@ -1,0 +1,33 @@
+.venv/
+__pycache__/
+*.pyc
+*.wav
+*.mp4
+*.pth
+*.pt
+/data/
+
+# Local environments, caches and model weights
+.env
+.env.*
+.pytest_cache/
+panns_data/
+.cache/
+*.gguf
+*.safetensors
+*.ckpt
+*.onnx
+*.bin
+tools/ffmpeg/bin/*.exe
+tools/ffmpeg/bin/*.dll
+
+# Generated project output
+videos/
+Extract audio/
+Labeled audio regions/
+Segmenting the speech/
+Audio quality SNR/
+Review and export/
+Transcription/
+corpus_*/
+*_autosave.json

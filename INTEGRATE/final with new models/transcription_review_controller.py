@@ -1,0 +1,537 @@
+"""Connect the transcription and final review pages to Qwen, Cohere and the export workflow.
+
+Function guide
+--------------
+find, mark_transcript_draft, mark_final_draft, set_text, clear
+    Locate UI controls and track unsaved edits without firing spurious change signals.
+source_changed, check_current, sync_current, payload, restore
+    Synchronize review records with the current source and restore saved transcription
+    state.
+final_records, refresh, selected, select_asr, show_comparison, select_final
+    Show current clips, both model outputs and their normalized agreement.
+changed, choose, commit_transcript, commit_final, commit_drafts
+    Apply the reviewer's model choice or edited text and save review decisions.
+transcribe, receive_piece, receive_progress, cancel, task_finished
+    Run the two backends sequentially and record progress, partial results and
+    failures.
+play_table, split, merge, add, delete, recalculate
+    Audition or edit final clips and recompute quality for changed audio.
+save_process_summary, save_review, export
+    Save the per-video summary, review table and final corpus.
+"""
+import copy
+import gc
+import json
+from pathlib import Path
+import tempfile
+import threading
+import uuid
+
+from PyQt6.QtCore import QObject, Qt, QSettings, pyqtSignal
+from PyQt6.QtWidgets import QFileDialog, QHeaderView, QInputDialog, QMessageBox
+import soundfile as sf
+import transcript_agreement_and_io as engines
+import corpus_review_and_export as corpus
+import clip_quality_assessment as snr
+
+
+class ASRWorkspace(QObject):
+    piece=pyqtSignal(object)
+    progress=pyqtSignal(object)
+
+    def __init__(self,processing):
+        super().__init__(processing)
+        self.p=processing;self.w=processing.window;self.ui=self.w
+        self.records=[];self.audit_log=[];self.signature=None;self.source_metadata={}
+        self.stop_event=threading.Event();self.asr_running=False;self.autosave_path=None
+        self.current_asr=None;self.current_final=None
+        self.transcript_draft=False;self.final_draft=False
+        self.playback_dir=tempfile.TemporaryDirectory(prefix='speech_corpus_play_')
+        self.p.table(self.ui.asrTable);self.p.table(self.ui.finalTable);self.p.table(self.ui.processSummaryTable)
+        header = self.ui.finalTable.horizontalHeader()
+        header.setStretchLastSection(False)
+        for column, key in enumerate(corpus.REVIEW_COLUMNS):
+            if 'transcript' in key or key in ('audio_file', 'change_log'):
+                header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
+                header.resizeSection(column, 300 if 'transcript' in key else 200)
+        for text in (self.ui.asrTextA,self.ui.asrTextB,self.ui.asrNormalizedA,self.ui.asrNormalizedB,self.ui.asrFinalText,self.ui.finalText):
+            option=text.document().defaultTextOption();option.setAlignment(Qt.AlignmentFlag.AlignRight)
+            option.setTextDirection(Qt.LayoutDirection.RightToLeft);text.document().setDefaultTextOption(option)
+        self.ui.asrTable.itemSelectionChanged.connect(self.select_asr)
+        self.ui.finalTable.itemSelectionChanged.connect(self.select_final)
+        self.ui.asrFinalText.textChanged.connect(self.mark_transcript_draft)
+        self.ui.finalText.textChanged.connect(self.mark_final_draft)
+        for control in (self.ui.finalStart,self.ui.finalEnd):control.valueChanged.connect(self.mark_final_draft)
+        for control in (self.ui.finalLabel,self.ui.finalQuality,self.ui.finalStatus):control.currentIndexChanged.connect(self.mark_final_draft)
+        actions={
+            'asrSync':self.sync_current,'asrSelected':lambda:self.transcribe(True),'asrPending':lambda:self.transcribe(False),
+            'asrOpenSession':self.p.open_project,'asrPlay':lambda:self.play_table(self.ui.asrTable),
+            'asrUseA':lambda:self.choose('a'),'asrUseB':lambda:self.choose('b'),
+            'asrAccept':lambda:self.commit_transcript('accepted'),'asrDifficult':lambda:self.commit_transcript('difficult'),
+            'asrGoReview':lambda:self.w.navigationList.setCurrentRow(5),'finalToASR':lambda:self.w.navigationList.setCurrentRow(4),
+            'finalApply':self.commit_final,'finalPlay':lambda:self.play_table(self.ui.finalTable),
+            'finalSplit':self.split,'finalMerge':self.merge,'finalAdd':self.add,'finalDelete':self.delete,
+            'finalRecalculate':self.recalculate,'finalExport':self.export,'finalSaveReview':self.save_review,
+            'saveProcessSummary':self.save_process_summary,
+        }
+        for name,action in actions.items():getattr(self.ui,name).clicked.connect(lambda checked=False,a=action:self.p.guard(a))
+        self.ui.asrStop.clicked.connect(self.cancel)
+        self.piece.connect(self.receive_piece);self.progress.connect(self.receive_progress)
+        self.refresh()
+
+    def find(self,ident):return next((r for r in self.records if r['segment_id']==ident),None)
+
+    def mark_transcript_draft(self):self.transcript_draft=True;self.p.dirty=True
+    def mark_final_draft(self,*args):self.final_draft=True;self.p.dirty=True
+
+    def set_text(self,widget,text):
+        widget.blockSignals(True);widget.setPlainText(text or '');widget.blockSignals(False)
+
+    def clear(self):
+        self.records=[];self.audit_log=[];self.signature=None;self.source_metadata={}
+        self.current_asr=self.current_final=None;self.transcript_draft=self.final_draft=False
+        for widget in (self.ui.asrTextA,self.ui.asrTextB,self.ui.asrNormalizedA,self.ui.asrNormalizedB,self.ui.asrFinalText,self.ui.finalText):self.set_text(widget,'')
+        self.ui.asrComparison.setText('Select a clip to compare its transcripts.')
+        self.ui.asrCerA.setText('Qwen CER vs Cohere (normalized): —')
+        self.ui.asrCerB.setText('Cohere CER vs Qwen (normalized): —')
+        self.ui.asrAutomaticChoice.setText('Automatic decision before human editing: —')
+        self.ui.asrAutomaticReason.setText('Select a clip to see the agreement result and reason.')
+        self.refresh()
+
+    def source_changed(self):
+        if self.records:self.ui.asrInfo.setText('Earlier clips/quality changed. Load clips and unresolved spans again before ASR or export.')
+
+    def check_current(self):
+        if not self.records:raise ValueError('Load clips and unresolved spans on Transcription first.')
+        if corpus.source_signature(self.p)!=self.signature:
+            raise ValueError('Source clips or quality changed. Load clips and unresolved spans to synchronize before continuing.')
+
+    def sync_current(self):
+        self.commit_drafts()
+        fresh=corpus.from_processing(self.p)
+        if not fresh:
+            raise ValueError('No approved clips or unresolved spans to load.')
+        fresh_by_id={r['segment_id']:r for r in fresh}
+        # Reuse preview evidence only for precisely the same PCM samples.
+        def interval(r):
+            return (r['source_origin'], round(r['start']*corpus.RATE), round(r['end']*corpus.RATE))
+        previews = {interval(r): r for r in self.records if corpus.is_preview(r)
+                    and Path(r['source_origin']).is_file() and corpus.audio_signature(r) == r['audio_signature']}
+        promotions = {r['segment_id']: previews[interval(r)] for r in fresh
+                      if not corpus.is_preview(r) and r['label'] in corpus.VOICE and interval(r) in previews}
+        promoted = {r['segment_id'] for r in promotions.values()}
+        replaced = [r for r in self.records if r['segment_id'] not in promoted and
+                    (not corpus.is_preview(r) or r.get('asr_a_done') or r.get('asr_b_done') or r.get('human_override')) and
+                    (r['segment_id'] not in fresh_by_id or r.get('audio_signature') != fresh_by_id[r['segment_id']]['audio_signature'])]
+        if replaced and QMessageBox.question(self.w,'Replace changed clips or spans',
+            f'{len(replaced)} rows have changed or disappeared in Part 4. Save a session first to keep their previous reviews. Load the new rows?',
+            QMessageBox.StandardButton.Yes|QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)!=QMessageBox.StandardButton.Yes:
+            return
+        old={r['segment_id']:r for r in self.records};kept=0
+        for i,r in enumerate(fresh):
+            previous=old.get(r['segment_id'])
+            preview = promotions.get(r['segment_id'])
+            if preview and not previous:
+                for key in ('transcript_a','transcript_b','confidence_a','confidence_b','asr_a_done','asr_b_done',
+                            'models','asr_a_engine','asr_b_engine','asr_errors','legacy_asr_results','human_override','status',
+                            'transcript_status','selected_transcript','final_transcript','updated_by','updated_at'):
+                    if key in preview:
+                        r[key] = copy.deepcopy(preview[key])
+                r['human_changes'].extend(copy.deepcopy(preview.get('human_changes', [])))
+                r['transcribed_from_preview'] = preview['segment_id']
+            if previous and previous.get('audio_signature')==r['audio_signature']:
+                quality={key:copy.deepcopy(value) for key,value in r.items() if key.startswith('snr_') or key in ('energy_snr_db','wada_snr_db','clean_noisy','quality_history')}
+                if previous.get('snr_override_by'):
+                    analysis=copy.deepcopy(r.get('snr_analysis') or {})
+                    snr.preserve_override(analysis,previous.get('snr_analysis'))
+                    if analysis.get('override_by'):quality.update(snr.corpus_fields(analysis))
+                fresh[i]=copy.deepcopy(previous);fresh[i].update(quality)
+                fresh[i].update(source_metadata=r['source_metadata'],segmentation_status=r['segmentation_status'])
+                kept+=1
+        engines.migrate_second_engine(fresh,self.ui.cohereModel.text().strip())
+        engines.migrate_first_engine(fresh, engines.DEFAULT_QWEN_MODEL)
+        for record in fresh:corpus.compare(record)
+        self.records=fresh;self.signature=corpus.source_signature(self.p)
+        source=self.p.source_folder()/'metadata.json'
+        self.source_metadata=json.loads(source.read_text(encoding='utf-8')) if source.is_file() else {}
+        self.current_asr=self.current_final=None;self.transcript_draft=self.final_draft=False
+        self.p.dirty=True;self.refresh()
+        if self.ui.asrTable.rowCount():
+            self.ui.asrTable.selectRow(0)
+            self.select_asr()
+        n = sum(corpus.is_preview(r) for r in fresh)
+        self.ui.asrInfo.setText(f'Loaded {len(fresh)-n} approved clips and {n} unresolved previews. Retained {kept} unchanged rows. Preview text can be reviewed here before approving boundaries in Part 4.')
+
+    def payload(self):
+        return dict(records=copy.deepcopy(self.records),audit_log=copy.deepcopy(self.audit_log),signature=self.signature,
+                    source_metadata=self.source_metadata,qwen_model=self.ui.qwenModel.text().strip(),cohere_model=self.ui.cohereModel.text().strip(),
+                    second_asr_engine=engines.COHERE_ENGINE,
+                    asr_comparison_policy=engines.comparison_policy())
+
+    def restore(self,data,*,saved_snr=None):
+        self.clear()
+        if not data:return
+        records=data.get('records',[])
+        if not isinstance(records,list):raise ValueError('Saved ASR records are invalid.')
+        ids=[]
+        for r in records:
+            ids.append(r['segment_id'])
+            if corpus.is_preview(r):
+                first, last = round(r['start']*corpus.RATE), round(r['end']*corpus.RATE)
+                if not 0 <= first < last or round(r['duration']*corpus.RATE) != last-first:
+                    raise ValueError('Invalid saved unresolved span.')
+            elif not 5-1/16000<=r['duration']<=15+1/16000:raise ValueError('A saved final clip has invalid duration.')
+            if corpus.audio_signature(r)!=r['audio_signature']:raise ValueError('An ASR source audio file changed or moved.')
+        if len(ids)!=len(set(ids)):raise ValueError('Duplicate final clip IDs in saved session.')
+        self.ui.qwenModel.setText(engines.DEFAULT_QWEN_MODEL)
+        self.ui.cohereModel.setText(data.get('cohere_model') or engines.DEFAULT_COHERE_MODEL)
+        migrated=engines.migrate_second_engine(records,self.ui.cohereModel.text().strip())
+        migrated_a=engines.migrate_first_engine(records, engines.DEFAULT_QWEN_MODEL)
+        for record in records:corpus.compare(record)
+        self.records=sorted(records,key=lambda r:(float(r['start']),float(r['end']),r['segment_id']))
+        self.audit_log=data.get('audit_log',[])
+        self.signature=data.get('signature')
+        # A legacy session hashes SNR rows in their stored order. Migrate only
+        # when that original signature matches and row order is the sole change.
+        if saved_snr and self.p.snr_results == sorted(saved_snr,key=snr.source_time_key):
+            if self.signature == corpus.source_signature(self.p,saved_snr):
+                self.signature=corpus.source_signature(self.p)
+        self.source_metadata=data.get('source_metadata',{})
+        self.refresh()
+        if migrated_a:self.ui.asrInfo.setText(f'{migrated_a} older Model A outputs were archived. Run transcription for Qwen.')
+        if migrated:self.ui.asrInfo.setText(f'{migrated} earlier system-B results were archived with their model names. Run Transcribe all pending for Cohere; Qwen and human transcript edits were preserved.')
+
+    def final_records(self):
+        return self.records
+
+    def refresh(self):
+        final_rows = self.final_records()
+        percent=lambda value:'—' if value is None else f'{value:.2%}'
+        self.p.populate(self.ui.asrTable,[[r['segment_id'],f"{r['start']:.3f}",f"{r['end']:.3f}",f"{r['duration']:.3f}",'Unresolved' if corpus.is_preview(r) else 'Resolved',r['label'],r.get('clean_noisy',''),
+            'Done' if r.get('asr_a_done') else 'Pending','Done' if r.get('asr_b_done') else 'Pending',
+            percent(r.get('cer_a_vs_b')),percent(r.get('cer_b_vs_a')),r['status']] for r in self.records])
+        self.p.populate(self.ui.finalTable, [
+            ['' if row[k] is None else row[k] for k in corpus.REVIEW_COLUMNS]
+            for row in corpus.review_rows(final_rows, self.audit_log)])
+        counts={s:sum(r['status']==s for r in final_rows) for s in ['accepted','needs_review','difficult','not_applicable']}
+        self.ui.finalSummary.setText('Clips: '+str(len(final_rows))+' · '+' · '.join(f'{k}: {v}' for k,v in counts.items()))
+        summary = corpus.process_summary(self.p.duration or 0, self.p.regions, self.records, self.audit_log)
+        regions = summary['region_seconds']
+        def minute(value): return f'{value / 60:.2f} min'
+        def percent_count(value):
+            return f"{100 * value / summary['asr_total']:.1f}%" if summary['asr_total'] else '—'
+        snr_value = '—' if summary['mean_snr'] is None else f"{summary['mean_snr']:.2f} dB"
+        video_name = self.source_metadata.get('title') or (self.p.source_folder().name if self.p.audio else '—')
+        values = [video_name, minute(summary['duration']), minute(regions['speech']), minute(regions['music']),
+                  minute(regions['mixed']), str(summary['segments']), snr_value,
+                  percent_count(summary['counts']['accepted']), percent_count(summary['counts']['chosen']),
+                  percent_count(summary['counts']['difficult'])]
+        self.p.populate(self.ui.processSummaryTable, [values])
+        self.ui.processSummaryNote.setText(
+            f"Includes {summary['unresolved']} unresolved spans. ASR outcomes use {summary['asr_total']} eligible items; "
+            f"{summary['pending']} pending. Mean SNR uses {summary['snr_count']} available values.")
+
+
+    def selected(self,table):
+        rows=self.p.selected(table)
+        if not rows:raise ValueError('Select one or more clips.')
+        records = self.final_records() if table is self.ui.finalTable else self.records
+        return [records[i] for i in rows]
+
+    def select_asr(self):
+        rows=self.p.selected(self.ui.asrTable)
+        if len(rows)!=1:return
+        if self.transcript_draft and self.current_asr:
+            try:self.commit_transcript('accepted' if self.ui.asrFinalText.toPlainText().strip() else 'needs_review',refresh=False)
+            except Exception as exc:QMessageBox.warning(self.w,'Save transcript first',str(exc));return
+        r=self.records[rows[0]];self.current_asr=r['segment_id']
+        self.set_text(self.ui.asrTextA,r.get('transcript_a',''));self.set_text(self.ui.asrTextB,r.get('transcript_b',''));self.set_text(self.ui.asrFinalText,r.get('final_transcript',''))
+        self.set_text(self.ui.asrNormalizedA,r.get('normalized_transcript_a',''))
+        self.set_text(self.ui.asrNormalizedB,r.get('normalized_transcript_b',''))
+        self.transcript_draft=False
+        self.show_comparison(r)
+
+    def show_comparison(self,r):
+        fmt=lambda v:'—' if v is None else f'{v:.3f}'
+        percent=lambda v:'—' if v is None else f'{v:.2%}'
+        rule_cer=r.get('cer') if r.get('normalized_transcript_a') and r.get('normalized_transcript_b') else None
+        self.ui.asrComparison.setText(f"Current decision: {r['status']} · Rule CER (B vs A): {percent(rule_cer)} · WER: {percent(r.get('wer'))} · word edits: {r.get('word_difference')} · Review limit: {r.get('review_word_edit_limit') or '—'} word edits · A score: {fmt(r.get('confidence_a'))} · B score: {fmt(r.get('confidence_b'))}")
+        self.ui.asrCerA.setText('Qwen CER vs Cohere (normalized): '+percent(r.get('cer_a_vs_b')))
+        self.ui.asrCerB.setText('Cohere CER vs Qwen (normalized): '+percent(r.get('cer_b_vs_a')))
+        self.ui.asrAutomaticChoice.setText(f"Automatic decision before human editing: {r.get('automatic_status','needs_review')}")
+        self.ui.asrAutomaticReason.setText(r.get('agreement_reason','Waiting for both ASR attempts.'))
+
+    def select_final(self):
+        rows=self.p.selected(self.ui.finalTable)
+        if len(rows)!=1:return
+        if self.final_draft and self.current_final:
+            try:self.commit_final(refresh=False)
+            except Exception as exc:QMessageBox.warning(self.w,'Save final edit first',str(exc));return
+        r=self.final_records()[rows[0]];self.current_final=r['segment_id']
+        preview = corpus.is_preview(r)
+        for control in (self.ui.finalStart, self.ui.finalEnd, self.ui.finalLabel, self.ui.finalQuality,
+                        self.ui.finalStatus, self.ui.finalText, self.ui.finalReason, self.ui.finalApply, self.ui.finalSplit):
+            control.setEnabled(not preview)
+        fields=[(self.ui.finalStart,r['start']),(self.ui.finalEnd,r['end'])]
+        for field,value in fields:field.blockSignals(True);field.setValue(value);field.blockSignals(False)
+        for field,value in [(self.ui.finalLabel,r['label']),(self.ui.finalQuality,r.get('clean_noisy','unavailable')),(self.ui.finalStatus,r['status'])]:
+            field.blockSignals(True);field.setCurrentText(value);field.blockSignals(False)
+        self.set_text(self.ui.finalText,r.get('final_transcript',''));self.final_draft=False
+        self.ui.finalMapping.setText('Source mapping: '+', '.join(f"{p['start']:.3f}–{p['end']:.3f}s" for p in r['source_spans']))
+
+    def changed(self,refresh=True):
+        self.p.dirty=True
+        if refresh:self.refresh()
+
+    def choose(self,key):
+        self.p.index(self.ui.asrTable)
+        r=self.find(self.current_asr)
+        if r is None:raise ValueError('Select one ASR row.')
+        text=r.get('transcript_'+key,'')
+        if not r.get('asr_'+key+'_done') or not text:raise ValueError('That model has no completed transcript for this clip.')
+        self.set_text(self.ui.asrFinalText,text);self.commit_transcript('accepted')
+
+    def commit_transcript(self,status,refresh=True):
+        if refresh:self.p.index(self.ui.asrTable)
+        r=self.find(self.current_asr)
+        if r is None:raise ValueError('Select one ASR row.')
+        who=self.p.reviewer();text=self.ui.asrFinalText.toPlainText().strip()
+        if status=='accepted' and not engines.normalize_arabic(text):raise ValueError('Accepted speech needs final text, not only punctuation or diacritics.')
+        before=copy.deepcopy(r)
+        r.update(final_transcript=text,selected_transcript=text,status=status,transcript_status=status,human_override=True)
+        corpus.audit(self.audit_log,'transcript_review',who,before,r)
+        self.show_comparison(r)
+        self.transcript_draft=False;self.changed(refresh)
+
+    def commit_final(self,refresh=True):
+        if refresh:self.p.index(self.ui.finalTable)
+        r=self.find(self.current_final)
+        if r is None:raise ValueError('Select one final-review row.')
+        corpus.edit(r,self.p.audio,self.p.duration,self.ui.finalStart.value(),self.ui.finalEnd.value(),
+            self.ui.finalLabel.currentText(),self.ui.finalQuality.currentText(),self.ui.finalText.toPlainText(),
+            self.ui.finalStatus.currentText(),self.p.reviewer(),self.audit_log,self.ui.finalReason.text())
+        self.final_draft=False;self.changed(refresh)
+        if refresh:self.p.status('Final edit saved. If audio boundaries changed, recalculate SNR and rerun ASR.')
+
+    def commit_drafts(self):
+        if self.transcript_draft and self.current_asr:self.commit_transcript('accepted' if self.ui.asrFinalText.toPlainText().strip() else 'needs_review',False)
+        if self.final_draft and self.current_final:self.commit_final(False)
+
+    def transcribe(self,selected):
+        self.commit_drafts()
+        if not self.records:self.sync_current()
+        self.check_current()
+        chosen=self.selected(self.ui.asrTable) if selected else self.records
+        ids={r['segment_id'] for r in chosen if corpus.can_transcribe(r)}
+        if not ids:raise ValueError('Select speech, mixed audio or an unresolved preview for transcription.')
+        qwen=self.ui.qwenModel.text().strip();cohere=self.ui.cohereModel.text().strip()
+        if not qwen or not cohere:raise ValueError('Enter both model names.')
+        records=copy.deepcopy(self.records);jobs={}
+        engines.migrate_second_engine(records,cohere)
+        engines.migrate_first_engine(records,qwen)
+        desired={'a':qwen,'b':cohere}
+        for r in records:
+            if r['segment_id'] not in ids:continue
+            keys=[key for key in ('a','b') if selected or not r.get('asr_'+key+'_done') or (r.get('models') or {}).get(key)!=desired[key]]
+            if keys:jobs[r['segment_id']]=keys
+            for key in keys:
+                r['asr_'+key+'_done']=False
+                r['transcript_'+key]=''
+                r['confidence_'+key]=None
+            corpus.compare(r)
+        if not jobs:self.p.status('Both ASR engines have already run. Use Transcribe selected to rerun them.');return
+        self.stop_event.clear();self.asr_running=True;self.ui.asrStop.setVisible(True)
+        total=sum(map(len,jobs.values()));self.ui.asrProgress.setRange(0,total);self.ui.asrProgress.setValue(0)
+        snapshot=self.p.project_payload()
+        base_state=self.payload();base_state['records']=records
+        asr_folder = self.p.source_folder() / 'Transcription'
+        asr_folder.mkdir(parents=True, exist_ok=True)
+        self.autosave_path=asr_folder / (self.p.audio.stem+'_full_autosave.json')
+        autosave=self.autosave_path
+        def persist():
+            from audio_review_controller import atomic_json
+            snapshot['asr']=copy.deepcopy(base_state);atomic_json(autosave,snapshot)
+        def action(log):
+            completed=0;errors=[]
+            persist()
+            for key,name in [('a',qwen),('b',cohere)]:
+                work=[r for r in records if key in jobs.get(r['segment_id'],[])]
+                if not work or self.stop_event.is_set():continue
+                model=None
+                try:
+                    loader=engines.load_qwen_model if key=='a' else engines.load_cohere_model
+                    model = loader(name, log, stop_event=self.stop_event) if key == 'a' else loader(name, log)
+                    for r in work:
+                        if self.stop_event.is_set():break
+                        log(f"{name}: {r['segment_id']}")
+                        try:
+                            if corpus.audio_signature(r)!=r['audio_signature']:raise ValueError('Clip audio changed since review.')
+                            text,confidence=corpus.transcribe_record(r,key,model,self.stop_event)
+                            r.update(**{'transcript_'+key:text,'confidence_'+key:confidence,'asr_'+key+'_done':True})
+                            r.setdefault('asr_errors',{}).pop(key,None)
+                            r.setdefault('models',{})[key]=name
+                            if key=='a':r['asr_a_engine']='qwen_transformers'
+                            if key=='b':r['asr_b_engine']=engines.COHERE_ENGINE
+                            corpus.compare(r)
+                        except InterruptedError:
+                            if self.stop_event.is_set():break
+                            raise
+                        except Exception as exc:
+                            r.setdefault('asr_errors',{})[key]=str(exc);errors.append(f"{r['segment_id']} {key}: {exc}")
+                            r['asr_'+key+'_done']=False
+                        # Save before beginning the next clip/model. Failure stops work.
+                        persist();self.piece.emit(copy.deepcopy(r));completed+=1;self.progress.emit((completed,total))
+                except InterruptedError:
+                    if not self.stop_event.is_set():
+                        raise
+                    break
+                except Exception as exc:
+                    # Persistence errors must stop the entire job instead of continuing.
+                    if isinstance(exc,OSError):raise
+                    errors.append(f'{name}: {exc}');log('ASR model error: '+str(exc))
+                    for r in work:
+                        if not r.get('asr_'+key+'_done'):r.setdefault('asr_errors',{})[key]=str(exc)
+                    persist()
+                finally:
+                    engines.release_asr_model(model)
+                    model=None
+                    gc.collect()
+            persist()
+            return dict(records=records,errors=errors,cancelled=self.stop_event.is_set(),completed=completed,total=total)
+        def done(result):
+            self.records=result['records'];self.changed()
+            self.select_asr()
+            self.select_final()
+            state='Stopped after the current clip' if result['cancelled'] else 'Transcription finished'
+            self.ui.asrInfo.setText(f"{state}: {result['completed']} / {result['total']} model/clip jobs. Errors: {len(result['errors'])}. Autosave: {autosave}")
+            self.p.status(self.ui.asrInfo.text())
+            if result['errors']:self.w.append_log('ASR errors: '+'; '.join(result['errors']))
+        try:self.p.start('Transcribing clips and unresolved spans…',action,done)
+        except Exception:
+            self.task_finished();raise
+
+    def receive_piece(self,record):
+        for i,r in enumerate(self.records):
+            if r['segment_id']==record['segment_id']:self.records[i]=record;break
+        self.p.dirty=True;self.refresh()
+
+    def receive_progress(self,value):self.ui.asrProgress.setValue(value[0])
+
+    def cancel(self):
+        self.stop_event.set();self.ui.asrStop.setEnabled(False)
+        self.p.status('Stopping after the current model/clip finishes; completed results remain autosaved.')
+
+    def task_finished(self):
+        self.asr_running=False;self.ui.asrStop.hide();self.ui.asrStop.setEnabled(True)
+
+    def play_table(self,table):
+        records=self.selected(table)
+        if len(records)!=1:raise ValueError('Select one clip to play.')
+        record=records[0]
+        if corpus.is_preview(record):
+            self.p.play(Path(record['source_origin']),record['start'],record['end'])
+            return
+        audio=corpus.read_audio(record)
+        path=Path(self.playback_dir.name)/(uuid.uuid4().hex+'.wav')
+        sf.write(path,audio,16000,subtype='PCM_16');self.p.play(path,0,len(audio)/16000)
+
+    def split(self):
+        self.commit_drafts();r=self.selected(self.ui.finalTable)
+        if len(r)!=1:raise ValueError('Select one clip to split.')
+        if corpus.is_preview(r[0]):raise ValueError('Review unresolved boundaries in Segments first.')
+        who=self.p.reviewer();parts=corpus.split(r[0],self.ui.finalSplitPosition.value())
+        index=self.records.index(r[0]);before=copy.deepcopy(r[0]);self.records[index:index+1]=parts
+        corpus.audit(self.audit_log,'split_final_clip',who,before,parts);self.current_final=None;self.changed()
+
+    def merge(self):
+        self.commit_drafts();selected=self.selected(self.ui.finalTable);who=self.p.reviewer()
+        if any(corpus.is_preview(r) for r in selected):raise ValueError('Review unresolved boundaries in Segments first.')
+        merged=corpus.merge(selected)
+        before=copy.deepcopy(selected);ids={r['segment_id'] for r in selected}
+        self.records=[r for r in self.records if r['segment_id'] not in ids]+[merged];self.records.sort(key=lambda r:r['start'])
+        corpus.audit(self.audit_log,'merge_final_clips',who,before,merged);self.current_final=None;self.changed()
+
+    def add(self):
+        self.commit_drafts();self.p.require_audio();who=self.p.reviewer()
+        record=corpus.new_clip(self.p.audio,self.ui.finalStart.value(),self.ui.finalEnd.value(),self.ui.finalLabel.currentText(),self.p.duration)
+        self.records.append(record);self.records.sort(key=lambda r:r['start'])
+        corpus.audit(self.audit_log,'add_final_clip',who,None,record);self.changed()
+
+    def delete(self):
+        self.commit_drafts();selected=self.selected(self.ui.finalTable);who=self.p.reviewer()
+        if any(corpus.is_preview(r) for r in selected):raise ValueError('Review unresolved boundaries in Segments first.')
+        ids={r['segment_id'] for r in selected}
+        corpus.audit(self.audit_log,'delete_final_clips',who,selected,None)
+        self.records=[r for r in self.records if r['segment_id'] not in ids];self.current_final=None;self.changed()
+
+    def recalculate(self):
+        self.commit_drafts();selected=self.selected(self.ui.finalTable);who=self.p.reviewer();threshold=self.ui.finalSNRThreshold.value()
+        policy=self.p.snr_policy;justification=self.p.ui.snrJustification.text().strip()
+        snapshot=copy.deepcopy(selected)
+        def done(result):
+            by_id={r['segment_id']:r for r in result}
+            before=copy.deepcopy(self.records)
+            self.records=[by_id.get(r['segment_id'],r) for r in self.records]
+            corpus.audit(self.audit_log,'recalculate_final_snr',who,before,self.records,f'Threshold {threshold:g} dB; pause energy + WADA; rule {policy}')
+            self.changed()
+        self.p.start('Calculating pause energy + WADA-SNR for final-review clips…',lambda log:corpus.recalculate_quality(snapshot,threshold,policy,justification),done)
+
+    def save_process_summary(self):
+        self.commit_drafts()
+        self.check_current()
+        default_name = self.source_metadata.get('title') or self.p.source_folder().name
+        name, accepted = QInputDialog.getText(self.w, 'Video name', 'Enter the video name', text=default_name)
+        if not accepted:
+            return
+        name = name.strip()
+        if not name:
+            raise ValueError('Enter a video name to save the summary.')
+        settings = QSettings('Speech Corpus Studio', 'Speech Corpus Studio')
+        default = settings.value('summary_workbook', str(self.p.source_folder() / 'process_summary.xlsx'))
+        filename, _ = QFileDialog.getSaveFileName(
+            self.w, 'Select summary workbook to create or append', str(default),
+            'Excel workbook (*.xlsx)', options=QFileDialog.Option.DontConfirmOverwrite)
+        if not filename:
+            return
+        path = Path(filename)
+        if not path.suffix:
+            path = path.with_suffix('.xlsx')
+        if path.suffix.lower() != '.xlsx':
+            raise ValueError('Choose an .xlsx workbook.')
+        summary = corpus.process_summary(self.p.duration, self.p.regions, self.records, self.audit_log)
+        corpus.append_summary_workbook(path, name, summary)
+        settings.setValue('summary_workbook', str(path))
+        self.p.status(f'Summary appended: {path}')
+
+    def save_review(self):
+        self.commit_drafts()
+        self.check_current()
+        folder = self.p.source_folder() / 'Review and export'
+        folder.mkdir(parents=True, exist_ok=True)
+        formats = {'CSV (*.csv)': '.csv', 'Excel (*.xlsx)': '.xlsx', 'HTML (*.html)': '.html', 'JSON (*.json)': '.json'}
+        path, selected = QFileDialog.getSaveFileName(
+            self.w, 'Save review table', str(folder / 'review'), ';;'.join(formats))
+        if not path:
+            return
+        path = Path(path)
+        if not path.suffix:
+            path = path.with_suffix(formats.get(selected, '.csv'))
+        corpus.export_review_csv(path, self.records, self.audit_log)
+        self.p.status(f'Review table saved: {path}')
+
+    def export(self):
+        self.commit_drafts();self.check_current()
+        directory=QFileDialog.getExistingDirectory(self.w,'Export final corpus',str(self.p.source_folder()))
+        if not directory:return
+        directory = str(Path(directory) / 'Review and export')
+        records=copy.deepcopy(self.records);audit=copy.deepcopy(self.audit_log)
+        metadata=dict(source=self.source_metadata,audio=str(self.p.audio),
+                      source_review=dict(region_changes=self.p.changes,step4=self.p.session,snr=self.p.snr_results),
+                      qwen_model=self.ui.qwenModel.text(),cohere_model=self.ui.cohereModel.text(),second_asr_engine=engines.COHERE_ENGINE,
+                      pending_source_candidates=sum(r['status']=='pending' for r in self.p.session['segments']),
+                      unresolved_source_spans=sum(r['status']!='reviewed' for _,r,_,_ in corpus.review.visible_unresolved(self.p.session)))
+        partial=self.ui.allowPartialExport.isChecked()
+        def done(result):
+            self.p.status(f"Exported {result['clips']} clips to {result['output_dir']}. Partial: {result['partial']}.")
+            self.w.open_path(Path(result['output_dir']))
+        self.p.start('Writing corpus WAV, TXT, CSV and audit data…',lambda log:corpus.export_corpus(records,metadata,audit,directory,partial),done)
