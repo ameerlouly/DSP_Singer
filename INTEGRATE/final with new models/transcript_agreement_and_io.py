@@ -1,22 +1,10 @@
-"""Normalize Arabic ASR outputs for comparison and persist transcripts with their source intervals.
+"""Compare Arabic transcripts and save decisions with their source times.
 
-Function guide
---------------
-normalize_arabic, load_term_spellings, comparison_copies
-    Prepare comparison copies, including explicitly listed alternative spellings.
-comparison_policy, review_word_limit, comparison_details, compare_transcripts
-    Score character and word disagreement and assign an automatic review status.
-migrate_second_engine, migrate_first_engine
-    Preserve retired-engine provenance when restoring older sessions.
-_number, _validated_spans, _refresh_segment_times, _make_segment,
-load_manifest_segments
-    Validate source mappings and construct a consistent in-memory segment record.
-get_audio_info, read_segment_audio, slice_spans
-    Inspect source audio, read mapped samples and trim interval mappings.
-save_project, update_source_manifest, write_source_manifest, save_source_manifest,
-load_saved_project, export_csv
-    Persist project state, synchronize review fields and export transcript data.
+normalize_arabic makes a comparison copy, comparison_details scores the two models'
+outputs, and the manifest helpers preserve the link to the audio. Project and CSV
+writers keep the raw texts, final edit and review status together.
 """
+
 from __future__ import annotations
 
 import csv
@@ -56,12 +44,10 @@ SUPPORTED_STATUSES = {"accepted", "needs_review", "difficult"}
 
 
 def normalize_arabic(text: str) -> str:
-    """PDF Step 6 comparison copy; raw/final transcripts are never rewritten.
+    """Build a copy for comparing Arabic text while keeping the original transcript.
 
-    Compatibility forms include Arabic presentation glyphs and lam-alef
-    ligatures. Hamza on waw/yeh (ؤ/ئ) and standalone ء remain distinct: the PDF
-    specifies folding alef forms, not deleting every hamza-bearing letter.
-    """
+    Expand presentation forms such as lam-alef, then fold the alef variants.
+    Keep standalone ء and the hamza in ؤ and ئ distinct."""
     normalized = unicodedata.normalize("NFKC", text or "")
     characters = []
     for character in normalized:
@@ -134,6 +120,7 @@ def comparison_copies(first, second):
     return original[0], original[1], []
 
 
+# Keep the comparison settings with the scores so a saved decision can be explained later.
 def comparison_policy() -> dict[str, Any]:
     return dict(normalization_version=NORMALIZATION_VERSION,
                 agreement_rule_version=AGREEMENT_RULE_VERSION,
@@ -203,6 +190,7 @@ def migrate_first_engine(records, desired_model):
     return changed
 
 
+# Give longer unresolved clips the extra word differences allowed by the review rule.
 def review_word_limit(unresolved_duration: float | None = None) -> int:
     if unresolved_duration is None:
         return BASE_REVIEW_WORD_EDITS
@@ -276,6 +264,7 @@ def compare_transcripts(first: str, second: str) -> tuple[str, float, int, float
     return result["automatic_status"], result["cer"], result["word_difference"], result["wer"]
 
 
+# Read a finite numeric field and check its lower bound when one is supplied.
 def _number(value: Any, field: str, *, minimum: float | None = None) -> float:
     try:
         result = float(value)
@@ -286,6 +275,7 @@ def _number(value: Any, field: str, *, minimum: float | None = None) -> float:
     return result
 
 
+# Check that the source intervals are valid for the length of the recording.
 def _validated_spans(raw_spans: Any, duration: float) -> list[dict[str, float]]:
     if not isinstance(raw_spans, list) or not raw_spans:
         raise ValueError("A segment must contain at least one source span.")
@@ -302,6 +292,7 @@ def _validated_spans(raw_spans: Any, duration: float) -> list[dict[str, float]]:
     return spans
 
 
+# Bring the record's time fields back in sync with its source intervals.
 def _refresh_segment_times(segment: dict[str, Any]) -> None:
     spans = segment["source_spans"]
     segment["start"] = round(spans[0]["start"], 3)
@@ -309,6 +300,7 @@ def _refresh_segment_times(segment: dict[str, Any]) -> None:
     segment["duration"] = round(sum(s["end"] - s["start"] for s in spans), 3)
 
 
+# Turn a saved clip description into the record the transcription page uses.
 def _make_segment(
     raw: dict[str, Any], index: int, duration: float, *, unresolved: bool = False
 ) -> dict[str, Any]:
@@ -427,6 +419,7 @@ def load_manifest_segments(
     return payload, segments
 
 
+# Read the audio metadata needed to check the segment timestamps.
 def get_audio_info(wav_path: Path) -> dict[str, Any]:
     try:
         import soundfile as sf
@@ -507,6 +500,7 @@ def slice_spans(
     return result
 
 
+# Save review progress with the manifest and recording it belongs to.
 def save_project(
     path: Path,
     manifest_path: Path,
@@ -588,6 +582,7 @@ def update_source_manifest(
             raw.update(review_fields)
 
 
+# Write the revised source manifest back to disk.
 def write_source_manifest(path: Path, manifest: dict[str, Any]) -> None:
     path = Path(path)
     temporary_path = path.with_name(path.name + ".tmp")
@@ -604,6 +599,7 @@ def write_source_manifest(path: Path, manifest: dict[str, Any]) -> None:
         raise OSError(f"Could not update the source JSON: {exc}") from exc
 
 
+# Copy the current review decisions into the source manifest before saving it.
 def save_source_manifest(
     path: Path, manifest: dict[str, Any], segments: list[dict[str, Any]]
 ) -> None:
@@ -611,6 +607,7 @@ def save_source_manifest(
     write_source_manifest(path, manifest)
 
 
+# Reload earlier review work when its recording and manifest still match.
 def load_saved_project(
     path: Path, manifest_path: Path, wav_path: Path, wav_duration: float
 ) -> list[dict[str, Any]] | None:

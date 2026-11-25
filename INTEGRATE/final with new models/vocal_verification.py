@@ -1,16 +1,10 @@
-"""Inspect possible singing using a separated vocal track during mixed-region labeling.
+"""Check whether a window labeled music also contains singing.
 
-Function guide
---------------
-VocalSeparator
-    Load the vocal separator on demand and extract vocal evidence from source samples.
-level, verify_music_windows
-    Measure vocal levels and refine labels for windows initially classified as music.
-
-The separator's vocals output alone is not voice proof: instruments can leak
-into it. Require both meaningful local stem energy and voice-tagging evidence.
-No source audio or separated audio is written by this module.
+VocalSeparator extracts an estimated vocal track, and verify_music_windows checks it
+against voice tags and local energy. Instruments can leak into the separated track, so
+energy alone is weak evidence for a voice.
 """
+
 import copy
 import math
 
@@ -27,6 +21,7 @@ RULE = 'panns_demucs_vocals_v3'
 
 
 class VocalSeparator:
+    # Load the separator and look up which output track contains the vocals.
     def __init__(self, device='cpu', progress=lambda text: None):
         try:
             import torch
@@ -41,6 +36,7 @@ class VocalSeparator:
         self.model = HDEMUCS_HIGH_MUSDB_PLUS.get_model().to(device).eval()
         self.index = self.model.sources.index('vocals')
 
+    # Extract the vocal track and align it with the length of the original audio.
     def __call__(self, mono, rate):
         original_length = len(mono)
         if not original_length:
@@ -62,6 +58,7 @@ class VocalSeparator:
         return np.pad(vocals, (0, max(0, original_length - len(vocals))))[:original_length]
 
 
+# Measure the RMS level in decibels, using the floor value for unusable input.
 def level(audio):
     if not len(audio) or not np.isfinite(audio).all():
         return -240.0

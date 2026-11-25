@@ -1,7 +1,8 @@
-"""Check Cancel/OK handling and confirmed exit with a real thread/child process.
+"""Try cancelling and confirming the main window's close prompt while work is active.
 
-The checks run in file order when this script is executed directly.
+The final check uses a running thread and child process to exercise shutdown.
 """
+
 import os
 from pathlib import Path
 import subprocess

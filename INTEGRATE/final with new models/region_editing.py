@@ -1,11 +1,9 @@
-"""Apply a label correction to a selected part of a merged region.
+"""Change the label inside a larger region without losing the audio on either side.
 
-Function guide
---------------
-relabel_range
-    Split at the requested source times and preserve the labels and evidence outside
-    the edit.
+relabel_range splits at the marked times and carries the original window evidence into
+the resulting pieces.
 """
+
 import copy
 import math
 
@@ -33,6 +31,7 @@ def relabel_range(region, start, end, label):
     if not first <= a < b <= last:
         raise ValueError('The selected range must be inside the selected region, with start before end.')
 
+    # Keep a piece of the original region with the analysis evidence that belongs to it.
     def piece(left, right, changed):
         item = copy.deepcopy(region)
         item.update(start=left / RATE, end=right / RATE, boundaries_modified=True)

@@ -1,10 +1,9 @@
-"""Test classification, spectrogram and SNR edge cases with synthetic audio.
+"""Use synthetic waveforms to check classification, spectrogram and SNR edge cases.
 
-Test guide
-----------
-FakeTagger
-    Return fixed classifier scores for the decision checks.
+FakeTagger supplies predictable scores so the test controls which branch the
+classifier takes.
 """
+
 import sys
 from pathlib import Path
 from unittest.mock import patch
@@ -19,7 +18,9 @@ from audio_spectrogram import calculate_spectrogram
 from audio_review_controller import validate_regions
 
 class FakeTagger:
+ # Start with the first row of simulated classifier scores.
  def __init__(self,**kw):self.i=0
+ # Hand back the next scores without loading a sound-event model.
  def inference(self,x):
   assert x.shape==(1,64000)
   scores=np.array([[.8,.05,.01],[.05,.8,.01],[.8,.7,.01]])[self.i:self.i+1];self.i+=1

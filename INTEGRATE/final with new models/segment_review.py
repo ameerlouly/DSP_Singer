@@ -1,30 +1,11 @@
-"""Track human decisions about proposed clips and export approved audio with its source provenance.
+"""Keep the review decisions for candidate clips and uncovered source spans.
 
-Function guide
---------------
-utc_now, inspect_wav, check_source, load_session, audit
-    Timestamp edits, examine WAV metadata and verify a session against the selected
-    source.
-validate_bounds, set_segment, candidate_trim_bounds, candidate_source_spans,
-set_candidate_trim
-    Validate time edits and map local trims to source audio.
-pdf_audio_mapping, pdf_review_signature, require_pdf_review
-    Check continuous source audio and bind a boundary review to that exact selection.
-approve_segment, approve_segments, exclude_segment
-    Record individual or batch approval and exclusion decisions.
-unresolved_bounds, visible_unresolved, downstream_unresolved
-    Find unreviewed spans and subtract audio that is already approved.
-label_unresolved, mark_unresolved_reviewed, add_from_unresolved,
-add_resegmented_candidates
-    Review a span and create candidates while tracking which audio was used.
-safe_candidate_path, extract_wav, item_source_ranges
-    Resolve candidate files safely and read the designated audio intervals.
-overlapping_approved, resolve_approved_overlaps
-    Detect competing approved ranges and reconcile them with an audit entry.
-report_html, approved_playback_queue, file_sha256, build_step5_manifest, playlist_html,
-save_and_export
-    Write the reviewed clip set, playback list, source mappings and integrity hashes.
+load_session matches a session to its WAV. The editing functions translate between
+clip time and source time, and the approval functions record who checked each
+boundary. save_and_export writes the reviewed clips and their source mappings for
+quality analysis.
 """
+
 from output_folders import new_run_folder
 from bisect import bisect_right
 from pathlib import Path
@@ -43,10 +24,12 @@ LABELS = ('speech', 'mixed', 'music', 'silence')
 RATE = 16000
 
 
+# Stamp the review event in UTC.
 def utc_now():
     return datetime.now(timezone.utc).isoformat()
 
 
+# Get the frame count and rate after checking the recording uses the expected PCM format.
 def inspect_wav(path):
     with wave.open(str(path), 'rb') as w:
         if (w.getframerate(), w.getnchannels(), w.getsampwidth(), w.getcomptype()) != (RATE, 1, 2, 'NONE'):
@@ -54,6 +37,7 @@ def inspect_wav(path):
         return w.getnframes(), w.getframerate()
 
 
+# Check that the WAV the user opened is the one this session describes.
 def check_source(path, name, size, duration):
     path = Path(path)
     if not path.is_file() or path.name != name or path.stat().st_size != size:
@@ -64,6 +48,7 @@ def check_source(path, name, size, duration):
     return frames/rate
 
 
+# Open the saved segment decisions and match them to the source recording.
 def load_session(input_file, source_wav):
     input_file, source_wav = Path(input_file).resolve(), Path(source_wav).resolve()
     payload = json.loads(input_file.read_text(encoding='utf-8-sig'))
@@ -97,6 +82,7 @@ def load_session(input_file, source_wav):
     return data
 
 
+# Keep a record of who made this edit and what changed.
 def audit(data, action, person, item_id, before, after):
     person=person.strip()
     if not person:
@@ -105,6 +91,7 @@ def audit(data, action, person, item_id, before, after):
                             'item_id':item_id, 'before':copy.deepcopy(before), 'after':copy.deepcopy(after)})
 
 
+# Check the marked start, end and length before using them as clip boundaries.
 def validate_bounds(start, end, duration):
     start, end = float(start), float(end)
     if not 0 <= start < end <= duration:
@@ -115,6 +102,7 @@ def validate_bounds(start, end, duration):
     return round(start*RATE)/RATE, round(end*RATE)/RATE
 
 
+# Save the new label and source times with the candidate's edit history.
 def set_segment(data, index, label, start, end, reviewer):
     if label not in LABELS:
         raise ValueError('Choose a valid label.')
@@ -171,6 +159,7 @@ def candidate_source_spans(item):
     return result
 
 
+# Trim within the clip while keeping track of where those samples came from.
 def set_candidate_trim(data,index,start,end,reviewer):
     reviewer=reviewer.strip()
     if not reviewer:
@@ -200,7 +189,7 @@ def set_candidate_trim(data,index,start,end,reviewer):
 
 
 def pdf_audio_mapping(data, item):
-    """Validate PDF source continuity; artificial samples cannot become silence evidence."""
+    """Check that every clip sample comes from one continuous interval in the source recording."""
     if item['source_mode']=='continuous_source':
         a,b=validate_bounds(item['source_start'],item['source_end'],data['source']['duration_seconds'])
         return a,b
@@ -222,11 +211,13 @@ def pdf_audio_mapping(data, item):
     return validate_bounds(first/RATE,source_cursor/RATE,data['source']['duration_seconds'])
 
 
+# Tie the listening check to these particular bounds and this label.
 def pdf_review_signature(data,item):
     a,b=pdf_audio_mapping(data,item)
     return dict(source_start=a,source_end=b,label=item['label'],source_mode=item['source_mode'])
 
 
+# Require a new listening check if the reviewed clip has changed.
 def require_pdf_review(data,item):
     signature=pdf_review_signature(data,item)
     checked=item.get('pdf_boundary_review') or {}
@@ -235,6 +226,7 @@ def require_pdf_review(data,item):
     return signature['source_start'],signature['source_end']
 
 
+# Mark this candidate approved and record the boundary check under the editor's name.
 def approve_segment(data, index, reviewer):
     reviewer=reviewer.strip()
     if not reviewer:
@@ -284,6 +276,7 @@ def approve_segments(data, indices, reviewer):
 
 
 
+# Keep the candidate in the history while excluding it from the approved set.
 def exclude_segment(data,index,reviewer):
     reviewer=reviewer.strip()
     if not reviewer:
@@ -390,6 +383,7 @@ def visible_unresolved(data):
     return result
 
 
+# Compare sample counts so the one-second cutoff is exact.
 def under_one_second(start, end):
     return round(end * RATE) - round(start * RATE) < RATE
 
@@ -422,6 +416,7 @@ def downstream_unresolved(data, approved_ranges):
             yield item, cursor/RATE, last/RATE
 
 
+# Record the reviewer's label for the marked part of an unresolved interval.
 def label_unresolved(data,index,label,reviewer,start=None,end=None):
     if label not in LABELS:
         raise ValueError('Choose a valid label.')
@@ -459,6 +454,7 @@ def label_unresolved(data,index,label,reviewer,start=None,end=None):
           {'selected':item,'preserved_leftovers':leftovers})
 
 
+# Record who finished listening to this unresolved interval.
 def mark_unresolved_reviewed(data,index,reviewer):
     reviewer=reviewer.strip()
     if not reviewer:
@@ -471,6 +467,7 @@ def mark_unresolved_reviewed(data,index,reviewer):
     audit(data,'mark_unresolved_reviewed',reviewer,item['id'],before,item)
 
 
+# Check the user's selection falls inside the span before making a candidate from it.
 def add_from_unresolved(data,index,start,end,label,reviewer):
     if label not in LABELS:
         raise ValueError('Choose a valid label.')
@@ -507,6 +504,7 @@ def add_combined_clip(data, spans, start, end, label, reviewer):
     return append_manual_clip(data,list(dict.fromkeys(s[1]['id'] for s in spans)),start,end,label,reviewer.strip())
 
 
+# Keep the new clip's parent span IDs so its origin can be traced later.
 def append_manual_clip(data, parents, start, end, label, reviewer):
     item={'id':'manual-'+uuid.uuid4().hex[:12], 'original':None,
           'label':label, 'status':'pending', 'source_start':start, 'source_end':end,
@@ -557,6 +555,7 @@ def add_resegmented_candidates(data,index,candidates,reviewer):
     return first
 
 
+# Keep a candidate path inside the folder that owns its audio.
 def safe_candidate_path(root, name):
     root=Path(root).resolve()
     target=(root/name).resolve()
@@ -569,6 +568,7 @@ def safe_candidate_path(root, name):
     return target
 
 
+# Copy the selected frames from the source recording to a clip WAV.
 def extract_wav(source, dest, start, end):
     with wave.open(str(source),'rb') as src:
         start_frame,end_frame=round(start*RATE),round(end*RATE)
@@ -588,6 +588,7 @@ def extract_wav(source, dest, start, end):
 
 
 
+# Find the original time ranges that make up this candidate.
 def item_source_ranges(item):
     if item['source_mode'] == 'continuous_source':
         return [(item['source_start'], item['source_end'])]
@@ -598,6 +599,7 @@ def item_source_ranges(item):
         return [(float(item['source_start']),float(item['source_end']))]
 
 
+# Identify approved clips that would duplicate part of the recording.
 def overlapping_approved(data):
     approved=[x for x in data['segments'] if x['status']=='approved']
     results=[]
@@ -695,6 +697,7 @@ def resolve_approved_overlaps(data, reviewer):
             'remaining':overlapping_approved(data)}
 
 
+# Build the HTML view of candidates, decisions and review notes.
 def report_html(data, exports):
     e=lambda x:html.escape(str(x),quote=True)
     rows=[]
@@ -759,6 +762,7 @@ def approved_playback_queue(data,source_wav):
     return result
 
 
+# Fingerprint the WAV so the next stage can detect a changed recording.
 def file_sha256(path):
     digest=hashlib.sha256()
     with Path(path).open('rb') as f:
@@ -767,6 +771,7 @@ def file_sha256(path):
     return digest.hexdigest()
 
 
+# Give the quality stage the clip order, original intervals and file hashes.
 def build_step5_manifest(data, ordered, exports, output):
     clips=[]
     for order,item in enumerate(ordered,1):
@@ -805,6 +810,7 @@ def build_step5_manifest(data, ordered, exports, output):
             'clips':clips}
 
 
+# Build a playlist so the reviewer can listen through the exported clips.
 def playlist_html(clips):
     # Filenames are generated locally from fixed labels and digits, not user HTML.
     tracks=json.dumps([{'file':x['file'],'label':x['label']} for x in clips],ensure_ascii=True)
@@ -820,6 +826,8 @@ const list=document.getElementById('list');tracks.forEach((t,i)=>{const li=docum
 if(!tracks.length){current.textContent='No approved clips were exported.';document.getElementById('play').disabled=true;}document.getElementById('play').onclick=()=>playAt(0);audio.onended=()=>{if(index+1<tracks.length)playAt(index+1);else current.textContent='Playlist finished.';};</script></body></html>""".replace('TRACKS',tracks)
 
 
+# Save the review decisions, write approved WAVs and prepare their handoff to quality
+# analysis.
 def save_and_export(data, source_wav, destination):
     source=Path(source_wav).resolve()
     info=data['source']

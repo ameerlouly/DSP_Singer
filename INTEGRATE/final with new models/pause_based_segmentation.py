@@ -1,29 +1,14 @@
-"""Propose continuous speech clips at supported pauses and keep intervals that still need a reviewer.
+"""Cut speech and mixed audio at pauses in the original recording.
 
-Function guide
---------------
-vocal_pause_candidates, split_at_vocal_pauses, vocal_cut_evidence,
-vocal_pause_settings, mixed_pause_separator
-    Locate and describe possible breaks in separated vocals.
-merge_intervals, quiet_mixed_intervals, protect_mixed_continuity, explain_mixed_gaps,
-eligible_blocks
-    Combine source intervals and preserve possible sung words when accompaniment masks
-    a pause.
-detect_speech, recover_long_spans, adjacent_silence_limits
-    Locate speech activity and examine long intervals for boundaries.
-missing_intervals, write_unresolved_audio, subtract_intervals
-    Find uncovered ranges and preserve their audio for review.
-candidate_bounds, group_at_pauses, source_pause_intervals, pdf_pause_plan,
-edge_pause_evidence
-    Choose candidate endpoints using source pauses, padding and duration constraints.
-render_html, export_candidates
-    Write candidate audio, unresolved intervals and review metadata.
-
-The input region list is the same list shown by Step 3. Export never changes
-that list or the source WAV. Regions with no safe-length grouping are recorded
-for manual review rather than being forcibly cut through detected speech.
+detect_speech and the vocal checks find possible breaks. group_at_pauses builds 5–15
+second candidates. Short leftovers can join the following or preceding candidate if
+their new outer edge still has enough quiet audio. recover_long_spans checks long
+leftovers again, and export_candidates saves the clips and remaining intervals for
+listening review.
 """
+
 from output_folders import new_run_folder
+from bisect import bisect_right
 from datetime import datetime, timezone
 from pathlib import Path
 import copy
@@ -112,6 +97,7 @@ def split_at_vocal_pauses(islands, checks):
     return result
 
 
+# Find the vocal-pause measurement that supports each proposed cut.
 def vocal_cut_evidence(start, end, checks):
     evidence = {}
     for side, time_value in (('start', start), ('end', end)):
@@ -122,6 +108,7 @@ def vocal_cut_evidence(start, end, checks):
     return evidence
 
 
+# Keep the separator and pause settings alongside the candidates they produced.
 def vocal_pause_settings(requested, separator):
     return dict(requested=requested, model='HDEMUCS_HIGH_MUSDB_PLUS' if separator else None,
                 maximum_quiet_dbfs=VOCAL_QUIET_MAX_DBFS, relative_drop_db=VOCAL_QUIET_DROP_DB,
@@ -391,6 +378,7 @@ def write_unresolved_audio(audio, item, output, index):
     item['review_file_end'] = end / rate
 
 
+# Leave quiet audio at each end and share a short pause with the neighboring clip.
 def candidate_bounds(speech, i, j, block_start, block_end):
     left_limit = block_start if i == 0 else speech[i - 1][1]
     right_limit = block_end if j + 1 == len(speech) else speech[j + 1][0]
@@ -441,12 +429,118 @@ def group_at_pauses(speech, block_start, block_end):
     return groups, unresolved
 
 
+def prepend_short_unresolved(audio, groups, unresolved, pauses, block_left, vad, mixed_checks):
+    """Try adding each short leftover to the beginning of the clip that follows it."""
+    return extend_candidates_with_short_spans(audio, groups, unresolved, pauses,
+                                             block_left, vad, mixed_checks, prepend=True)
+
+
+def extend_candidates_with_short_spans(audio, groups, unresolved, pauses, block_limit, vad,
+                                       mixed_checks, *, prepend):
+    """Try moving one end of a candidate to include the short span beside it.
+
+    For example, a 2-second phrase can join a 10-second clip if the original
+    gap and the silence at the edges still fit within 15 seconds. The far end
+    of the clip stays where it was. Only the end we move needs a new pause check."""
+    if not groups or not unresolved:
+        return groups, unresolved, pauses
+    timeline = sorted([(g['start'], True, g) for g in groups] +
+                      [(r['start'], False, r) for r in unresolved], key=lambda row: row[0])
+    pause_starts = [a for a, _ in pauses]
+    vad_ends = [b for _, b in vad]
+    segments, consumed, extra_pauses = [], set(), []
+    rate = audio.samplerate
+    for i, (_, candidate, item) in enumerate(timeline):
+        if not candidate:
+            continue
+        segments.append(item)
+        neighbor = i - 1 if prepend else i + 1
+        if not 0 <= neighbor < len(timeline) or timeline[neighbor][1]:
+            continue
+        fragment = timeline[neighbor][2]
+        first, last = fragment['start'], fragment['end']
+        if last - first >= MIN_SECONDS:
+            continue
+
+        # The exported WAV includes everything between the two pieces. Count that
+        # time toward 15 seconds and stop before we reach another clip.
+        if prepend:
+            if last > item['start']:
+                continue
+            limit = max(block_limit, item['end'] - MAX_SECONDS)
+            if neighbor > 0:
+                limit = max(limit, timeline[neighbor - 1][2]['end'])
+            boundary = first
+            if round(limit * rate) > round(first * rate):
+                continue
+            lo, hi = max(limit, first - MAX_EDGE_SECONDS), min(last, first + MAX_EDGE_SECONDS + 0.04)
+        else:
+            if first < item['end']:
+                continue
+            limit = min(block_limit, item['start'] + MAX_SECONDS)
+            if neighbor + 1 < len(timeline):
+                limit = min(limit, timeline[neighbor + 1][2]['start'])
+            boundary = last
+            if round(limit * rate) < round(last * rate):
+                continue
+            lo, hi = max(first, last - MAX_EDGE_SECONDS - 0.04), min(limit, last + MAX_EDGE_SECONDS)
+
+        index = bisect_right(pause_starts, boundary) - 1
+        pause = pauses[index] if index >= 0 and pauses[index][1] >= boundary else None
+        if pause is None:
+            # A short pause can leave enough silence for one clip even if it was
+            # too short for two clips to share. Recheck that part of the WAV.
+            # For a song, a dip in the backing track can happen mid-word, so
+            # use only the pauses already found during mixed-audio analysis.
+            if any(c['start'] < hi and c['end'] > lo for c in mixed_checks):
+                continue
+            k = bisect_right(vad_ends, lo)
+            local_vad = []
+            while k < len(vad) and vad[k][0] < hi:
+                local_vad.append(vad[k])
+                k += 1
+            measured = source_pause_intervals(audio, local_vad, lo, hi,
+                                             minimum=MIN_EDGE_SECONDS, ceiling=VOCAL_QUIET_MAX_DBFS)
+            # If the quiet run ends at the search limit on the speech side, we
+            # haven't observed where the voice begins or ends.
+            pause = next(((a, b) for a, b in measured if a <= boundary <= b
+                          and (b < hi if prepend else a > lo)), None)
+            if pause is None:
+                continue
+
+        if prepend:
+            voice = pause[1]
+            edge = round(max(limit, pause[0], min(first, voice - EDGE_SECONDS)) * rate)
+            if voice >= last or edge > round(first * rate):
+                continue
+            padding, frames = round(voice * rate) - edge, round(item['end'] * rate) - edge
+            changes = dict(start=edge / rate, speech_start=voice,
+                           prepended_unresolved=dict(start=first, end=last))
+        else:
+            voice = pause[0]
+            edge = round(min(limit, pause[1], max(last, voice + EDGE_SECONDS)) * rate)
+            if voice <= first or edge < round(last * rate):
+                continue
+            padding, frames = edge - round(voice * rate), edge - round(item['start'] * rate)
+            changes = dict(end=edge / rate, speech_end=voice,
+                           appended_unresolved=dict(start=first, end=last))
+        if (round(MIN_EDGE_SECONDS * rate) <= padding <= round(MAX_EDGE_SECONDS * rate)
+                and round(MIN_SECONDS * rate) <= frames <= round(MAX_SECONDS * rate)):
+            segments[-1] = dict(item, **changes)
+            consumed.add(neighbor)
+            extra_pauses.append(pause)
+    remaining = [item for i, (_, candidate, item) in enumerate(timeline)
+                 if not candidate and i not in consumed]
+    return segments, remaining, merge_intervals(pauses + extra_pauses)
+
+
 def group_short_unresolved(unresolved, candidates):
     """Group consecutive short spans within one eligible block, preserving source pauses."""
     timeline = sorted([(item['start'], False, item) for item in unresolved] +
                       [(item['start'], True, item) for item in candidates], key=lambda row: row[0])
     n = len(timeline)
-    # Prefer covering more fragments, then use fewer review rows.
+    # Group as many short pieces as possible. If two plans cover the same number,
+    # pick the one that leaves the reviewer fewer rows to listen to.
     scores = [(0, 0)] * (n + 1)
     ends = list(range(1, n + 1))
     for i in range(n - 1, -1, -1):
@@ -524,6 +618,7 @@ def source_pause_intervals(audio, islands, start, end, *, minimum=VOCAL_PAUSE_MI
     return pauses
 
 
+# Keep the source time left over after the supplied intervals have been taken out.
 def subtract_intervals(intervals, excluded):
     result=[]
     for a,b in intervals:
@@ -645,6 +740,7 @@ def recover_long_spans(audio, active, groups, unresolved, left, right, checks, m
     return sorted(groups + recovered, key=lambda clip: clip['start']), remaining, used_pauses
 
 
+# Find the measured pause around each outer edge of the candidate.
 def edge_pause_evidence(segment, pauses):
     evidence={}
     for side,edge,voice in [('start',segment['start'],segment['speech_start']),
@@ -658,6 +754,7 @@ def edge_pause_evidence(segment, pauses):
     return evidence
 
 
+# Show the proposed clips and the audio that still needs a listener.
 def render_html(data):
     e = lambda x: html.escape(str(x), quote=True)
     rows = []
@@ -696,11 +793,10 @@ def render_html(data):
 
 
 def export_candidates(audio_path, regions, output_parent, progress=lambda text: None, *, use_vocal_pauses=True):
-    """Propose continuous 5–15 s source clips with measured natural-pause edges.
+    """Propose continuous 5–15 second clips with a measured pause at each end.
 
-    PDF Step 4 governs generation. No synthetic silence, stitching, forced
-    word cuts or automatic approval. Every estimated boundary needs listening.
-    """
+    Each candidate uses the original samples, including its quiet edges.
+    Leave uncertain boundaries for a listener before approval."""
     from silero_vad import load_silero_vad
     import torch
     path=Path(audio_path)
@@ -763,6 +859,12 @@ def export_candidates(audio_path, regions, output_parent, progress=lambda text: 
             groups,unresolved,refined=recover_long_spans(
                 audio,active,groups,unresolved,left,right,checks,model,progress)
             pauses=merge_intervals(pauses+refined)
+            # A short phrase between two clips gets one home. Try the following
+            # clip first, then offer only the remaining phrases to the preceding clip.
+            groups, unresolved, pauses = prepend_short_unresolved(
+                audio, groups, unresolved, pauses, left, vad, checks)
+            groups, unresolved, pauses = extend_candidates_with_short_spans(
+                audio, groups, unresolved, pauses, right, vad, checks, prepend=False)
             data['pause_intervals'].extend(dict(start=a,end=b,status='estimated_pause_review_required') for a,b in pauses)
             data['unresolved'].extend(group_short_unresolved(unresolved, groups))
             for segment in groups:
@@ -789,6 +891,13 @@ def export_candidates(audio_path, regions, output_parent, progress=lambda text: 
                     removed_gaps=[],synthetic_silence_start_seconds=0.,synthetic_silence_end_seconds=0.,
                     status='needs_review',notes=(['Recovered during the shorter-pause review pass.'] if segment.get('recovered') else []) + ['Continuous original source audio; both edges have 0.1–0.2 s detector-estimated natural pause.',
                         'Listen before approval: check full words, especially quiet consonants and sung onsets. No energy detector guarantees word boundaries.']))
+                for key, position in (('prepended_unresolved', 'preceding'), ('appended_unresolved', 'following')):
+                    if key in segment:
+                        fragment = segment[key]
+                        row = data['segments'][-1]
+                        row[key] = fragment
+                        row['notes'].append(f"Includes {position} unresolved speech/mixed audio from "
+                                            f"{fragment['start']:.3f} to {fragment['end']:.3f} s.")
         for index,item in enumerate(data['unresolved'],1):
             item['mixed_continuity_protected']=any(r['label']=='mixed' and r['end']>item['start'] and r['start']<item['end'] for r in regions)
             write_unresolved_audio(audio,item,output,index)

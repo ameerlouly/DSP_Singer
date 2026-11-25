@@ -1,23 +1,10 @@
-"""Download source video with metadata and convert its audio to a configurable PCM WAV.
+"""Get a source video onto disk and extract its audio.
 
-Function guide
---------------
-require_tools, probe
-    Check media tools and inspect the source streams.
-save_html, save_metadata_json, license_fields, recover_legacy_html_metadata,
-update_license
-    Record source metadata and license evidence and reopen older saved details.
-validate_folder_name, video_number, create_video_folder, rename_video_folder
-    Create or rename per-video folders with valid names.
-DownloadProgress, download_video
-    Combine stream byte counts and publish progress during the download.
-DownloadProgress.positive, report, publish
-    Validate stream sizes and report byte totals and percentage estimates.
-DownloadProgress.__call__, finishing, postprocess
-    Consume downloader hooks and reserve completion for the final processing stage.
-WavFormat, extract_audio
-    Validate the requested PCM format and extract audio with FFmpeg.
+download_video saves the media and available source metadata. DownloadProgress follows
+the video and audio streams through postprocessing. extract_audio passes the selected
+WAV format to FFmpeg.
 """
+
 from output_folders import metadata_folder, new_run_folder, project_folder, step_folder
 from dataclasses import dataclass
 from pathlib import Path
@@ -33,6 +20,7 @@ from urllib.parse import urlparse
 from html import escape, unescape
 
 
+# Check that both media tools are available before starting a download or extraction.
 def require_tools():
     for name in ('ffmpeg', 'ffprobe'):
         if not shutil.which(name):
@@ -59,13 +47,13 @@ def save_html(path, data):
         or 'Untitled'
     )
 
-    # Convert values into safe HTML text.
+    # Escape the displayed value, with a readable placeholder for missing metadata.
     def safe(value):
         if value is None or value == '':
             return 'Not reported'
         return escape(str(value))
 
-    # Display duration as hours, minutes and seconds.
+    # Turn the reported duration into a time the user can read.
     def format_duration(value):
         try:
             seconds = max(0, int(float(value)))
@@ -537,6 +525,7 @@ def update_license(video_folder, license_name, evidence_note=None, log=print):
     return data
 
 
+# Read the stream and container details that FFprobe reports for this file.
 def probe(path):
     result = subprocess.run(['ffprobe', '-v', 'error', '-show_streams', '-show_format',
                              '-of', 'json', str(path)], capture_output=True, text=True,
@@ -546,6 +535,7 @@ def probe(path):
     return json.loads(result.stdout)
 
 
+# Check a typed video-folder name before using it on disk.
 def validate_folder_name(name):
     name = name.strip()
     if (not name or name in ('.', '..') or name.endswith('.')
@@ -556,11 +546,13 @@ def validate_folder_name(name):
     return name
 
 
+# Read the number from a name such as video3.
 def video_number(name):
     match = re.fullmatch(r'video([1-9][0-9]*)', name, re.IGNORECASE)
     return int(match[1]) if match else 0
 
 
+# Create a new video folder under the destination the user selected.
 def create_video_folder(output_root, folder_name):
     root = Path(output_root).resolve()
     root.mkdir(parents=True, exist_ok=True)
@@ -594,6 +586,7 @@ def create_video_folder(output_root, folder_name):
         return folder
 
 
+# Rename the video directory and keep the affected output information in sync.
 def rename_video_folder(folder, new_name):
     folder = Path(folder)
     new_name = validate_folder_name(new_name)
@@ -618,6 +611,7 @@ def rename_video_folder(folder, new_name):
 class DownloadProgress:
     """Track combined video/audio bytes, marking estimated totals explicitly."""
 
+    # Start tracking each stream requested for this download.
     def __init__(self, info, callback, details_callback=None):
         formats = info.get('requested_formats') or [info]
         self.totals = {}
@@ -645,6 +639,7 @@ class DownloadProgress:
             self.estimated[ident] = estimated
             self.downloaded[ident] = 0
 
+    # Ignore sizes and rates that can't serve as a positive, finite estimate.
     @staticmethod
     def positive(value):
         try:
@@ -653,6 +648,7 @@ class DownloadProgress:
             return None
         return number if math.isfinite(number) and number > 0 else None
 
+    # Notify the interface only when there is a new progress value to display.
     def report(self, value):
         # Estimates can change as HTTP headers/fragment sizes become available.
         # A corrected percentage may decrease rather than hiding that correction.
@@ -665,6 +661,7 @@ class DownloadProgress:
         if value == 100:
             self.publish('complete')
 
+    # Combine the stream byte counts into one estimate for the download.
     def publish(self, state):
         known = all(size is not None for size in self.totals.values())
         if self.details_callback is not None:
@@ -675,10 +672,12 @@ class DownloadProgress:
                 'total_is_estimate': known and any(self.estimated.values()),
             })
 
+    # Keep the transfer in its finishing state while postprocessing runs.
     def finishing(self):
         self.report(-1)
         self.publish('finishing')
 
+    # Use the downloader's event to update the corresponding stream.
     def __call__(self, event):
         status = event.get('status')
         if status not in ('downloading', 'finished'):
@@ -728,6 +727,7 @@ class DownloadProgress:
         if len(self.finished) == len(self.totals):
             self.finishing()
 
+    # Report when the downloader moves on to postprocessing.
     def postprocess(self, event):
         if event.get('status') == 'started':
             self.finishing()
@@ -831,6 +831,7 @@ class WavFormat:
     channels: int = 1
     bit_depth: int = 16
 
+    # Check the selected channel count, sample rate and sample width before extraction.
     def __post_init__(self):
         if self.channels not in (1, 2) or self.bit_depth not in PCM_CODECS:
             raise ValueError('Choose mono or stereo and 8, 16, 24 or 32 bits per sample.')
@@ -841,6 +842,7 @@ class WavFormat:
 CORPUS_FORMAT = WavFormat()
 
 
+# Ask FFmpeg for the chosen PCM format and save the extraction details alongside the WAV.
 def extract_audio(video_path, log=print, *, wav_format=CORPUS_FORMAT):
     require_tools()
     video = Path(video_path).resolve()

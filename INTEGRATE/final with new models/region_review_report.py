@@ -1,14 +1,9 @@
-"""Write and reopen a portable report containing the region timeline and its review history.
+"""Save a region timeline that can be read in a browser and reopened in the editor.
 
-Function guide
---------------
-esc, number, confidence_text, render_report
-    Format text, scores and region rows for HTML.
-EmbeddedReviewParser, load_review
-    Recover the embedded session from HTML or load review JSON.
-save_report
-    Write the full report to the selected path.
+render_report builds the human-readable rows. save_report writes the report, and
+load_review reads back the saved labels and review history.
 """
+
 import base64
 import html
 from html.parser import HTMLParser
@@ -23,10 +18,12 @@ LABELS = ('speech', 'music', 'mixed', 'silence')
 COLORS = {'speech': '#16a5cf', 'music': '#c5428c', 'mixed': '#da8a14', 'silence': '#7b8790'}
 
 
+# Escape text before putting it in the HTML report.
 def esc(value):
     return html.escape(str(value), quote=True)
 
 
+# Display a missing score as a dash so it is distinct from a measured zero.
 def number(value, digits=3):
     return '—' if value is None else f'{float(value):.{digits}f}'
 
@@ -119,12 +116,14 @@ h2{{margin:0 0 12px;font-size:19px}}.cards{{display:flex;gap:10px;flex-wrap:wrap
 
 
 class EmbeddedReviewParser(HTMLParser):
+    # Prepare a buffer for the review data embedded in the HTML.
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.capture = False
         self.found = False
         self.parts = []
 
+    # Start collecting text at the script element that contains the saved review.
     def handle_starttag(self, tag, attrs):
         if tag == 'script' and dict(attrs).get('id') == 'speech-corpus-review-data':
             if self.found:
@@ -132,15 +131,18 @@ class EmbeddedReviewParser(HTMLParser):
             self.found = True
             self.capture = True
 
+    # Keep only text inside the review-data element.
     def handle_data(self, data):
         if self.capture:
             self.parts.append(data)
 
+    # Finish collecting the review data when the script closes.
     def handle_endtag(self, tag):
         if tag == 'script' and self.capture:
             self.capture = False
 
 
+# Read the saved timeline back so the reviewer can continue editing.
 def load_review(path):
     path = Path(path)
     text = path.read_text(encoding='utf-8-sig')

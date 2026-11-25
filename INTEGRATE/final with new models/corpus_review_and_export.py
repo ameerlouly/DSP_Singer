@@ -1,25 +1,10 @@
-"""Build review records from source intervals, manage human transcription decisions and export the corpus.
+"""Take the clip list through transcription, final edits and export.
 
-Function guide
---------------
-stamp, digest, source_signature, audio_signature
-    Identify a source or audio revision and timestamp changes.
-from_processing, is_preview, can_transcribe
-    Convert the current segmentation and quality records into the ASR queue.
-preview_audio, read_audio, transcribe_record
-    Read the selected audio and transcribe eligible spans, including longer unresolved
-    ones.
-compare, reset_audio_results, audit
-    Apply transcript-agreement rules, invalidate stale measurements and record edits.
-validate_range, edit, new_clip, slice_record, split, overlaps, merge
-    Validate and edit clip boundaries while preserving the source timeline.
-recalculate_quality, require_continuous_pdf_audio
-    Recompute quality from the clip and verify the audio mapping used for export.
-process_summary, append_summary_workbook
-    Compute per-video totals and append a named row to the summary workbook.
-review_rows, review_html, write_review_table, export_review_csv, export_corpus
-    Build review rows and write tables, paired audio/text files and corpus metadata.
+from_processing builds the records, compare updates agreement, and edit, split and
+merge keep track of changes to the audio. timeline_records puts clips and unresolved
+spans in recording order. export_corpus writes the WAVs, text and review tables.
 """
+
 from output_folders import new_run_folder
 import copy
 import csv
@@ -42,13 +27,16 @@ RATE=16000
 VOICE=('speech','mixed')
 
 
+# Use UTC for edit and export times so saved events can be ordered consistently.
 def stamp():return datetime.now(timezone.utc).isoformat(timespec='seconds')
 
 
+# Hash a stable JSON encoding so field order won't change the signature.
 def digest(value):
     return hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
+# Identify the recording, clip session and scores that this review was built from.
 def source_signature(processing, snr_records=None):
     if not processing.audio or not processing.session:return None
     return digest({'audio':str(processing.audio),'size':processing.audio.stat().st_size,
@@ -97,10 +85,12 @@ def from_processing(processing):
     return records
 
 
+# Tell whether this row is an unresolved span or a candidate still under review.
 def is_preview(record):
     return record.get('source_mode') in ('unresolved_preview', 'candidate_preview')
 
 
+# Include voice-bearing clips and unclassified previews that still need a listen.
 def can_transcribe(record):
     return record['label'] in VOICE or (is_preview(record) and record['label'] == 'unclassified')
 
@@ -132,6 +122,7 @@ def preview_audio(record):
             yield audio
 
 
+# Decode previews a window at a time and keep the resulting words in source order.
 def transcribe_record(record, key, model, stop_event):
     windows = preview_audio(record) if is_preview(record) else (read_audio(record),)
     parts = []
@@ -149,6 +140,7 @@ def transcribe_record(record, key, model, stop_event):
     return ' '.join(parts), score
 
 
+# Track which samples and label a cached analysis belongs to.
 def audio_signature(record):
     pieces=[]
     for piece in record['audio_pieces']:
@@ -157,6 +149,7 @@ def audio_signature(record):
     return digest(dict(pieces=pieces,label=record['label']))
 
 
+# Assemble the samples covered by this record's source mapping.
 def read_audio(record,for_snr=False):
     arrays=[]
     for piece in record['audio_pieces']:
@@ -176,6 +169,7 @@ def read_audio(record,for_snr=False):
     return np.concatenate(arrays)
 
 
+# Compare the two texts and update the automatic choice where a human edit allows it.
 def compare(record):
     record.update(normalized_transcript_a=asr.normalize_arabic(record.get('transcript_a','')),
                   normalized_transcript_b=asr.normalize_arabic(record.get('transcript_b','')),
@@ -206,6 +200,7 @@ def compare(record):
         record.update(status=status,transcript_status=status,final_transcript=final,selected_transcript=final)
 
 
+# Clear results that describe the clip before its audio changed.
 def reset_audio_results(record):
     record.update(transcript_a='',transcript_b='',final_transcript='',selected_transcript='',
                   confidence_a=None,confidence_b=None,asr_a_done=False,asr_b_done=False,
@@ -220,6 +215,7 @@ def reset_audio_results(record):
     if record['label'] not in VOICE:record.update(status='not_applicable',transcript_status='not_applicable')
 
 
+# Keep the editor, time and before/after values together for each change.
 def audit(log,action,who,before,after,reason=''):
     if not who.strip():raise ValueError('Enter the reviewer name first.')
     entry=dict(time_utc=stamp(),reviewer=who.strip(),action=action,reason=reason,
@@ -230,6 +226,7 @@ def audit(log,action,who,before,after,reason=''):
         after.setdefault('human_changes',[]).append({k:v for k,v in entry.items() if k not in ('before','after')})
 
 
+# Snap both endpoints to samples and check that they lie inside the source.
 def validate_range(start,end,duration):
     start,end=float(start),float(end)
     if not math.isfinite(start+end) or not 0<=start<end<=duration:raise ValueError('Choose source times within the recording.')
@@ -238,6 +235,7 @@ def validate_range(start,end,duration):
     return a/RATE,b/RATE
 
 
+# Apply the final edits and keep the previous values for the review history.
 def edit(record,source,duration,start,end,label,quality,final,status,who,log,reason):
     if not who.strip():raise ValueError('Enter the reviewer name first.')
     if label not in ('speech','mixed','music','silence'):raise ValueError('Invalid content label.')
@@ -269,6 +267,7 @@ def edit(record,source,duration,start,end,label,quality,final,status,who,log,rea
     audit(log,'edit_final_segment',who,before,record,reason)
 
 
+# Start a new review record from the source interval the user marked.
 def new_clip(source,start,end,label,duration):
     a,b=validate_range(start,end,duration)
     record=asr._make_segment(dict(id='manual-'+uuid.uuid4().hex[:10],start=a,end=b,label=label),1,duration)
@@ -299,12 +298,14 @@ def slice_record(record,first,last):
     reset_audio_results(result);return result
 
 
+# Make two clip records at the selected sample boundary.
 def split(record,position):
     cut=round(float(position)*RATE)/RATE;duration=record['duration']
     if not 5<=cut<=duration-5:raise ValueError('Both resulting clips must be at least 5 seconds long.')
     return [slice_record(record,0,cut),slice_record(record,cut,duration)]
 
 
+# Look for clips that claim some of the same original samples.
 def overlaps(records):
     spans=sorted((s['start'],s['end'],r['segment_id']) for r in records for s in r['source_spans'])
     active=[];result=[]
@@ -316,6 +317,7 @@ def overlaps(records):
     return result
 
 
+# Assemble the selected records in their original playback order.
 def merge(records):
     records=sorted(records,key=lambda r:r['start'])
     duration=sum(r['duration'] for r in records)
@@ -332,6 +334,7 @@ def merge(records):
     reset_audio_results(result);return result
 
 
+# Measure the edited audio again so its quality score matches its new boundaries.
 def recalculate_quality(records,threshold,policy='conservative',justification=''):
     result=copy.deepcopy(records)
     for r in result:
@@ -471,6 +474,7 @@ REVIEW_COLUMNS = (
 
 def review_rows(records, audit_log):
     """Project records into the spreadsheet schema, preserving the caller's row order."""
+    # Find segment IDs inside saved changes so each row gets its own history.
     def segment_ids(snapshot):
         if isinstance(snapshot, dict):
             if snapshot.get('segment_id'):
@@ -532,7 +536,9 @@ def review_rows(records, audit_log):
         }
 
 
+# Build the review page, including audio controls when clips are available.
 def review_html(rows, partial=None, playable=False):
+    # Escape values for display and give audio and history cells their own controls.
     def cell(key, value):
         text = html.escape(str(value)) if value is not None else ''
         if key == 'audio_file' and playable:
@@ -563,6 +569,7 @@ td:nth-child(n+6):nth-child(-n+8){{min-width:22em}}details{{min-width:10em;max-w
 <section aria-labelledby="report-title" tabindex="0"><table><thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></section></html>"""
 
 
+# Use the destination extension to pick the writer for the same review table.
 def write_review_table(path, rows):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -662,15 +669,18 @@ def timeline_records(records, session=None, source='', qualities=()):
     return sorted(combined,key=lambda r:(r['start'],r['end'],r['segment_id']))
 
 
+# Order the combined timeline and attach the edits belonging to each row.
 def report_rows(records, audit_log, session=None, source='', qualities=()):
     ordered = timeline_records(records,session,source,qualities)
     return list(review_rows(ordered,audit_log))
 
 
+# Build the review rows once and write them in the user's chosen format.
 def export_review_csv(path, records, audit_log, session=None, source='', qualities=()):
     return write_review_table(path,report_rows(records,audit_log,session,source,qualities))
 
 
+# Check the current review state before writing the corpus and its audit trail.
 def export_corpus(records,manifest,audit_log,destination,allow_partial=False):
     previews = [r for r in records if is_preview(r)]
     has_unresolved = bool(previews)
@@ -691,6 +701,7 @@ def export_corpus(records,manifest,audit_log,destination,allow_partial=False):
     source_review = manifest.get('source_review') or {}
     timeline = timeline_records([*records,*previews],source_review.get('step4'),
                                 manifest.get('audio',''),source_review.get('snr') or [])
+    # Recover the segmentation status for records from older sessions as well.
     def status(r):
         return r.get('segmentation_status') or ('unresolved' if r.get('source_mode')=='unresolved_preview'
                                                  else 'pending' if is_preview(r) else 'resolved')

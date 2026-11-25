@@ -1,9 +1,10 @@
-"""Organize video outputs by processing step and local save time.
+"""Keep repeated saves for one video in separate run folders.
 
-step_folder locates a named step. new_run_folder reserves a unique timestamp.
-save_dialog_folder offers a timestamped default for an explicit Save As dialog.
-project_folder and metadata_folder locate the source in new and older layouts.
+step_folder finds the processing stage and new_run_folder reserves a timestamped
+directory. The folder lookup functions also recognize projects saved with the older
+layout.
 """
+
 from contextlib import contextmanager
 from datetime import datetime
 from itertools import count

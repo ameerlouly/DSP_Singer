@@ -1,18 +1,11 @@
-"""Classify analysis windows as speech, music, mixed or silence and combine adjacent labels.
+"""Label a recording one analysis window at a time.
 
-Function guide
---------------
-analysis_settings, recorded_analysis_settings
-    Validate the window and hop, or recover the settings used for a saved analysis.
-decide_content
-    Assign a content label from sound-event scores and energy evidence.
-download_if_missing
-    Fetch the classifier asset when it is absent locally.
-merge_same_labeled_regions
-    Combine neighbors with the same label while retaining the original window scores.
-classify_file
-    Run PANNs on the WAV, optionally verify singing and return the labeled timeline.
+analysis_settings reads the window and hop. classify_file gathers the sound-event
+scores, decide_content chooses a label, and merge_same_labeled_regions combines
+neighboring windows with the same label. The original window scores stay available for
+review.
 """
+
 from pathlib import Path
 from urllib.request import urlretrieve
 import math
@@ -45,6 +38,8 @@ LABELING_RULE = 'panns_speech_music_vocals_v2'
 
 def analysis_settings(window_seconds=None, hop_seconds=None):
     """Validate optional settings; blank/None values use the existing defaults."""
+    # An empty settings box means "use the default". A number entered by the user must be
+    # valid.
     def number(value, default, name):
         if value is None or isinstance(value, str) and not value.strip():
             return default
@@ -107,6 +102,8 @@ def decide_content(speech, music, vocal):
     return label, max(speech, music), True, 'Low speech/music scores; review background noise and possible vocals.'
 
 
+# Download to a temporary file so an interrupted transfer can't leave a half-written model in
+# use.
 def download_if_missing(path, url, minimum_size):
     path = Path(path)
     if path.is_file() and path.stat().st_size >= minimum_size:
@@ -148,6 +145,7 @@ def merge_same_labeled_regions(windows):
         methods = sorted({w['vocal_verification_method'] for w in group if w.get('vocal_verification_method')})
         if methods:
             region['vocal_verification_method'] = ', '.join(methods)
+        # A window that covers more of the merged region contributes more to its score.
         def mean_score(key):
             valid = [(float(w['end']) - float(w['start']), float(w[key]))
                      for w in group if w.get(key) is not None]
@@ -201,6 +199,7 @@ def classify_file(path, progress=lambda x: None, *, verify_vocals=True,
     vocal_indices = [(name, list(labels).index(name)) for name in VOCAL_CLASSES if name in labels]
     if not vocal_indices:
         raise RuntimeError('The PANNs label list has no singing/vocal classes; check the installed AudioSet labels.')
+    # Run the voice tags on the separated track at the classifier's expected sample rate.
     def tag_voice(raw, rate):
         divisor = math.gcd(rate, 32000)
         x = resample_poly(raw, 32000 // divisor, rate // divisor).astype(np.float32)

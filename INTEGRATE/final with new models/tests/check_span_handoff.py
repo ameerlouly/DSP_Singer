@@ -1,12 +1,9 @@
-"""Qt workflow with real PCM and controlled, independent Arabic recognizers.
+"""Follow eligible unresolved audio alongside approved clips through SNR and transcription.
 
-Test guide
-----------
-wait
-    Process Qt events until the active background task finishes.
-check
-    Drive the resolved and unresolved handoff through quality review, ASR and export.
+The check uses real PCM samples and fixed replies from two recognizers so it can
+verify source timing and the resulting review decisions.
 """
+
 import csv
 import json
 import os
@@ -28,6 +25,7 @@ import segment_review as review
 from speech_corpus_app import MainWindow
 
 
+# Keep the UI event loop moving until the background task completes.
 def wait(app, processing):
     deadline = time.monotonic() + 20
     while processing.task is not None and time.monotonic() < deadline:
@@ -37,6 +35,7 @@ def wait(app, processing):
     assert processing.task is None
 
 
+# Follow one approved clip and an unresolved span through quality and transcription.
 def check():
     app = QApplication([])
     window = MainWindow(show_welcome=False)
@@ -105,9 +104,11 @@ def check():
         np.testing.assert_array_equal(raw, padded[:len(raw)])
         assert len(padded) == 80000 and not padded[len(raw):].any()
         calls = []
+        # Supply a fixed Arabic answer for the first recognizer.
         def run_a(model, audio):
             calls.append(('a', len(audio)))
             return 'اهلا', .8
+        # Supply a second spelling so the normalization rule gets exercised.
         def run_b(model, audio, rate):
             calls.append(('b', len(audio)))
             return 'أهلا', None

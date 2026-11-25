@@ -1,12 +1,9 @@
-"""Real Qt/audio/filesystem integration with controlled ASR model outputs.
+"""Drive the Qt workflow through recognition, review, saving and export.
 
-Test guide
-----------
-wait
-    Process Qt events until the active background task finishes.
-select
-    Select a review table row before performing an action.
+The model helpers supply known answers so the checks can follow each decision and
+saved file without downloading model weights.
 """
+
 import copy,csv,json,os,sys,tempfile,time,threading
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from pathlib import Path
@@ -24,11 +21,13 @@ import transcript_agreement_and_io as engine
 
 app=QApplication([]);w=MainWindow(show_welcome=False);p=w.processing;a=p.asr;w.show();app.processEvents()
 errors=[];opened=[]
+# Let Qt process worker events until the operation finishes.
 def wait():
  deadline=time.monotonic()+20
  while p.task is not None and time.monotonic()<deadline:app.processEvents();time.sleep(.01)
  assert p.task is None,'Task timed out'
  app.processEvents()
+# Highlight the same rows that a reviewer would select in the table.
 def select(table,indices):
  table.clearSelection()
  for i in indices:table.selectionModel().select(table.model().index(i,0),QItemSelectionModel.SelectionFlag.Select|QItemSelectionModel.SelectionFlag.Rows)
@@ -57,13 +56,17 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  assert len(a.records)==3 and np.array_equal(corpus.read_audio(a.records[0]),sf.read(root/'first.wav',dtype='float32')[0])
  assert a.ui.asrFinalText.layoutDirection()==Qt.LayoutDirection.RightToLeft
  calls=[]
+ # Supply a known first-model answer for each test clip and record the call.
  def qwen(model,audio):
   calls.append(('a',len(audio)));return ('أهلاً بكم',.9) if len(calls)==1 else ('السلام عليكم',.8)
+ # Give the second model a predictable answer so the expected agreement is known.
  def cohere(model,audio,rate):
   assert rate==16000;calls.append(('b',len(audio)))
   return ('اهلا بكم',.85) if sum(k=='b' for k,n in calls)==1 else ('السلام عليك',.75)
  model_a=object();model_b=dict(engine=engine.COHERE_CPU_ENGINE,model_name=engine.CPU_COHERE_MODEL);phases=[]
+ # Remember which engine was released to check the order of model loading.
  def release(model):phases.append('release_a' if model is model_a else 'release_b')
+ # Stand in for loading the second model and record when that happens.
  def load_b(*args):
   assert phases==['release_a'],'Cohere loaded before Qwen was released'
   return model_b
@@ -102,6 +105,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  # Rerun one clip, stop after Qwen, then resume only its missing Cohere result.
  a.ui.asrTable.selectRow(0)
  started=threading.Event();release=threading.Event()
+ # Request a stop after the first model returns so its result can be checked.
  def stop_after_a(model,audio):started.set();release.wait(3);return 'اهلا بكم',.9
  with patch.object(engine,'load_qwen_model',return_value=object()),patch.object(engine,'transcribe_qwen',side_effect=stop_after_a),patch.object(engine,'load_cohere_model') as load_b:
   a.transcribe(True)
@@ -121,6 +125,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  import audio_review_controller as controller
  original_write=controller.atomic_json
  allow_write=threading.Event()
+ # Hold the write briefly so the test can change the session while a save is pending.
  def delayed_write(path,payload):
   assert threading.current_thread() is not threading.main_thread()
   assert allow_write.wait(4),'UI could not dispatch timer while the save was active'

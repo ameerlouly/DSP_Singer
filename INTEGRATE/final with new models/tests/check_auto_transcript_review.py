@@ -1,8 +1,9 @@
-"""Exercise one-click processing through an agreement and a disagreement.
+"""Run auto processing through clips whose model outputs agree and disagree.
 
-The Qt button runs the real controllers, file I/O, SNR and comparison rules.
-Controlled classifier, segmenter and recognizers supply repeatable inputs.
+The Qt controls and file operations are real. Controlled model outputs make it
+possible to check exactly when the listener must choose the transcript.
 """
+
 import json
 import os
 import sys

@@ -1,10 +1,9 @@
-"""Load the audio handoff produced by segment review for subsequent quality analysis.
+"""Open the list of WAVs handed over from segment review.
 
-Function guide
---------------
-load_reviewed_clips
-    Read the manifest and validate the exported clips and their audio mapping.
+load_reviewed_clips checks their order, approval state and source mapping. It can also
+check each file's hash to catch audio that changed after approval.
 """
+
 from pathlib import Path
 import json
 from segment_review import file_sha256, inspect_wav

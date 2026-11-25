@@ -1,18 +1,10 @@
-"""Measure speech quality using pause-energy and WADA-SNR estimates.
+"""Estimate a clip's signal-to-noise ratio from its samples.
 
-Function guide
---------------
-valid_audio
-    Validate the waveform used by the estimators.
-energy_details
-    Estimate active signal and background power and describe the noise evidence.
-wada_table, wada_details
-    Load the lookup table and estimate SNR from the waveform amplitude distribution.
-
-Energy uses natural pause frames and an interpolated noise-power profile.
-WADA implements Kim & Stern (2008), Eq. 8, using CMU's alpha=0.4 table.
-The table and its redistribution notice live in assets/wada/.
+energy_details uses quiet frames to estimate the background. wada_details uses the
+amplitude distribution and CMU's alpha=0.4 lookup table for Kim and Stern's WADA
+method. The table and its license are in assets/wada/.
 """
+
 import hashlib
 import math
 from functools import lru_cache
@@ -25,6 +17,8 @@ METHODS=('pause_energy','wada_snr')
 WADA_TABLE_SHA256='9afbf39a19f4c9159335120e188ca9bdd56947a513ce022c2e98d5f6ce3fc24c'
 
 
+# Reject samples that can't give a meaningful estimate, including silence and constant
+# offsets.
 def valid_audio(samples,rate):
     x=np.asarray(samples,dtype=np.float64)
     if not isinstance(rate,(int,np.integer)) or rate<=0 or x.ndim!=1 or not np.isfinite(x).all():
@@ -34,6 +28,7 @@ def valid_audio(samples,rate):
     return x
 
 
+# Use active frames and measured quiet audio to estimate signal and background power.
 def energy_details(samples,rate=16000,pause_intervals=None):
     result=dict(value_db=None,status='unavailable',noise_source='unavailable',noise_anchors=[],
                 noise_variation_db=None,noise_frames=0,active_frames=0,notes=[])
@@ -98,6 +93,7 @@ def energy_details(samples,rate=16000,pause_intervals=None):
     return result
 
 
+# Read the lookup table that converts WADA's amplitude statistic into decibels.
 @lru_cache(maxsize=1)
 def wada_table():
     path=Path(__file__).resolve().parent/'assets/wada/Alpha0.400000.txt'
@@ -110,6 +106,7 @@ def wada_table():
     return table,hashlib.sha256(raw).hexdigest()
 
 
+# Measure the amplitude distribution and flag estimates that hit the limits of the table.
 def wada_details(samples,rate=16000):
     result=dict(value_db=None,status='unavailable',bound=None,blocks=[],notes=[])
     try:

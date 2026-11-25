@@ -1,7 +1,8 @@
-"""Qt singing-option handoff and complete-session persistence without models.
+"""Follow the singing-detection checkbox from the Qt page into the worker and back through a saved session.
 
-The checks run in file order when this script is executed directly.
+The proposals helper records which option the worker received.
 """
+
 import os
 from pathlib import Path
 import sys
@@ -24,6 +25,7 @@ with tempfile.TemporaryDirectory() as directory, \
     sf.write(wav,np.zeros(4*16000),16000,subtype='PCM_16')
     p.set_audio(wav)
     assert w.improveSinging.isChecked()
+    # Remember the vocal setting passed to the worker and supply one music window.
     def proposals(path, progress, *, verify_vocals, window_seconds, hop_seconds):
         return [dict(start=0.,end=4.,label='music',confidence=.8,auto_confidence=.8)]
     with patch('audio_review_controller.classify_file',side_effect=proposals) as classify:
@@ -41,6 +43,7 @@ with tempfile.TemporaryDirectory() as directory, \
             app.processEvents();time.sleep(.01)
         assert p.task is None
         assert classify.call_args.kwargs['verify_vocals'] is False
+    # Process UI events until the analysis has finished.
     def wait():
         deadline=time.monotonic()+20
         while p.task is not None and time.monotonic()<deadline:

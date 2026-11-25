@@ -1,13 +1,9 @@
-"""Part 3 subrange edits: timeline invariants, Qt actions and saved reviews.
+"""Edit part of a labeled region and check the pieces on either side.
 
-Test guide
-----------
-RangeEdits
-    Check middle preserves both sides and original, edges and whole region and related
-    cases.
-check_qt_workflow
-    Exercise range edits, playback, validation and session round-tripping through Qt.
+RangeEdits covers sample alignment and overlapping analysis windows. The Qt workflow
+also saves and reloads the selection to check its display and history.
 """
+
 import copy
 import math
 import os
@@ -23,10 +19,12 @@ from region_editing import RATE, relabel_range
 
 
 class RangeEdits(unittest.TestCase):
+    # Start each edit with a speech region whose original bounds and score are known.
     def setUp(self):
         self.region = dict(start=12., end=180., label='speech', auto_label='speech',
                            confidence=.8, auto_confidence=.8, needs_review=True)
 
+    # Changing a label in the middle should leave both outer pieces available.
     def test_middle_preserves_both_sides_and_original(self):
         original = copy.deepcopy(self.region)
         pieces, selected = relabel_range(self.region, 45, 60, 'music')
@@ -40,6 +38,7 @@ class RangeEdits(unittest.TestCase):
         self.assertEqual(pieces[1]['auto_confidence'], .8)
         self.assertEqual(self.region, original)
 
+    # Try edits that coincide with either edge and one that covers the whole region.
     def test_edges_and_whole_region(self):
         for start, end, count, selected in [(12, 60, 2, 0), (45, 180, 2, 1), (12, 180, 1, 0)]:
             with self.subTest(start=start, end=end):
@@ -48,6 +47,7 @@ class RangeEdits(unittest.TestCase):
                 self.assertEqual(sum(r['end'] - r['start'] for r in pieces), 168)
                 self.assertTrue(all(r['end'] > r['start'] for r in pieces))
 
+    # Check the input region after a rejected edit to catch partial changes.
     def test_invalid_ranges_rejected_without_mutating_original(self):
         original = copy.deepcopy(self.region)
         for start, end in [(11, 60), (45, 181), (60, 45), (45, 45), (45, 45 + .1 / RATE),
@@ -58,6 +58,7 @@ class RangeEdits(unittest.TestCase):
             relabel_range(self.region, 45, 60, 'unknown')
         self.assertEqual(self.region, original)
 
+    # Use a one-sample selection to expose any rounding error at a cut.
     def test_single_sample_and_sample_alignment(self):
         start = 45 + 1 / RATE
         pieces, selected = relabel_range(self.region, start, start + 1 / RATE, 'mixed')
@@ -66,6 +67,7 @@ class RangeEdits(unittest.TestCase):
             for key in ('start', 'end'):
                 self.assertAlmostEqual(region[key] * RATE, round(region[key] * RATE))
 
+    # Longer overlaps with an original analysis window should carry more weight.
     def test_original_window_scores_weighted_by_overlap(self):
         self.region['analysis_windows'] = [
             dict(start=12., end=50., confidence=.8, auto_confidence=.8, rms_dbfs=-20.),
@@ -79,6 +81,7 @@ class RangeEdits(unittest.TestCase):
         self.assertEqual(pieces[2]['window_count'], 1)
         self.assertEqual(edited['window_count'], 2)
 
+    # A second edit should preserve the labels already assigned to neighboring pieces.
     def test_repeated_edits_preserve_reviewed_outside_pieces(self):
         pieces, index = relabel_range(self.region, 45, 60, 'music')
         new, selected = relabel_range(pieces[index], 48, 52, 'mixed')
@@ -87,6 +90,7 @@ class RangeEdits(unittest.TestCase):
         self.assertEqual((new[selected]['start'], new[selected]['end']), (48, 52))
 
 
+# Drive the editor and save/load controls as a reviewer would.
 def check_qt_workflow():
     import time
     import numpy as np
@@ -150,6 +154,7 @@ def check_qt_workflow():
         assert len(warnings) == 1 and p.regions == before and p.changes == history
         warnings.clear()
 
+        # Keep dispatching Qt events until the range operation is finished.
         def wait():
             deadline=time.monotonic()+20
             while p.task is not None and time.monotonic()<deadline:
@@ -167,6 +172,7 @@ def check_qt_workflow():
         p.regions = []
         with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(project), '')):
             p.open_project();wait()
+        # Count the restored plot elements to catch missing labels or duplicated overlays.
         def check_restored_plot():
             deadline = time.monotonic() + 10
             while p.task is not None and time.monotonic() < deadline:

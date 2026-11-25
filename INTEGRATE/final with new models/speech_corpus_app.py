@@ -1,23 +1,10 @@
-"""Launch Speech Corpus Studio and connect the source, extraction and activity controls.
+"""Start the desktop app and handle the Source & Audio page.
 
-Function guide
---------------
-PipelineWorker.run
-    Perform the download or extraction outside the GUI thread.
-MainWindow, enter_workspace, main
-    Load the Designer UI, initialize the review pages and start the Qt event loop.
-append_log, choose_output, choose_video, extraction_format, update_format_hint
-    Collect source and format choices and show operation details.
-start_operation, set_download_progress, set_download_details
-    Start the worker and display its reported transfer progress.
-operation_succeeded, operation_failed, operation_finished, update_elapsed
-    Handle worker outcomes, timing and the availability of controls.
-show_source_details, open_path, open_report, open_result_folder, open_project_folder,
-rename_folder
-    Display source metadata and manage the user's output folders.
-closeEvent, stop_running_operation_and_exit
-    Confirm closure during an operation and stop active work before exit.
+MainWindow loads the Designer layout, shows progress and opens saved results.
+PipelineWorker runs downloads and extraction while the window continues responding.
+main starts the Qt event loop.
 """
+
 from output_folders import metadata_folder, project_folder
 import json
 import os
@@ -41,6 +28,7 @@ class PipelineWorker(QThread):
     succeeded = pyqtSignal(str, str)
     failed = pyqtSignal(str)
 
+    # Keep the source operation and its inputs together until the worker starts.
     def __init__(self, operation, value, output_folder='', folder_name='', parent=None, *, wav_format=CORPUS_FORMAT):
         super().__init__(parent)
         self.operation = operation
@@ -49,6 +37,7 @@ class PipelineWorker(QThread):
         self.folder_name = folder_name
         self.wav_format = wav_format
 
+    # Run the media task and send its outcome back to the window.
     def run(self):
         try:
             if self.operation == 'download':
@@ -68,6 +57,7 @@ class PipelineWorker(QThread):
 
 
 class MainWindow(QMainWindow):
+    # Load the Designer layout and connect the pages, player controls and Activity panel.
     def __init__(self, *, show_welcome=True):
         super().__init__()
         self.project_folder = Path(__file__).resolve().parent
@@ -125,22 +115,26 @@ class MainWindow(QMainWindow):
         from audio_review_controller import ProcessingWorkspace
         self.processing = ProcessingWorkspace(self)
 
+    # Move from the welcome screen into the project workspace.
     def enter_workspace(self):
         self.appScreens.setCurrentIndex(1)
         self.statusbar.show()
         self.setWindowTitle('Speech Corpus Studio')
         self.urlInput.setFocus()
 
+    # Add the message to Activity with its local time.
     def append_log(self, message):
         self.activityLog.appendPlainText(f'{datetime.now():%H:%M:%S}  {message}')
         scrollbar = self.activityLog.verticalScrollBar()
         scrollbar.setValue(scrollbar.maximum())
 
+    # Ask where this video's project files should live.
     def choose_output(self):
         chosen = QFileDialog.getExistingDirectory(self, 'Choose destination', self.outputFolderInput.text())
         if chosen:
             self.outputFolderInput.setText(chosen)
 
+    # Choose a video already on disk for audio extraction.
     def choose_video(self):
         chosen, _ = QFileDialog.getOpenFileName(
             self, 'Choose a video', str(self.project_folder),
@@ -150,17 +144,20 @@ class MainWindow(QMainWindow):
             self.videoPathInput.setText(chosen)
             self.show_source_details(Path(chosen).parent)
 
+    # Read the requested rate, channel count and bit depth from the form.
     def extraction_format(self):
         return WavFormat(sample_rate=int(self.sampleRateBox.currentText()),
                          channels={'Mono': 1, 'Stereo': 2}[self.channelBox.currentText()],
                          bit_depth=int(self.bitDepthBox.currentText()))
 
+    # Tell the user how the current format compares with the normal corpus settings.
     def update_format_hint(self):
         if self.extraction_format() == CORPUS_FORMAT:
             self.audioFormatLabel.setText('Corpus format · Opens in Regions after extraction.')
         else:
             self.audioFormatLabel.setText('Custom WAV export. For Regions, select 16000 Hz, mono, 16-bit.')
 
+    # Gather the current source settings before handing the operation to the worker.
     def start_operation(self, operation):
         if self.worker is not None or self.processing.task is not None:
             return
@@ -213,6 +210,7 @@ class MainWindow(QMainWindow):
         self.worker.finished.connect(self.worker.deleteLater)
         self.worker.start()
 
+    # Keep the last measured percentage while the downloader is waiting for a size estimate.
     def set_download_progress(self, value):
         self.downloadProgressBar.setTextVisible(False)
         self.progressBar.setTextVisible(True)
@@ -256,6 +254,7 @@ class MainWindow(QMainWindow):
         elif value < 99:
             self.statusLabel.setText('Downloading video and audio…')
 
+    # Use the stream updates to show which part of the transfer is in progress.
     def set_download_details(self, details):
         state = details.get('state')
         if state == 'reading':
@@ -283,6 +282,7 @@ class MainWindow(QMainWindow):
             )
         self.statusLabel.setText(text)
 
+    # Remember the output location and show the new result on the source page.
     def operation_succeeded(self, operation, path):
         self.last_result = Path(path)
         if operation == 'download':
@@ -302,6 +302,7 @@ class MainWindow(QMainWindow):
         self.show_source_details(metadata_folder(project_folder(self.last_result.parent)))
         self.append_log(f'Completed: {path}')
 
+    # Keep the failure state visible and show the reason the worker stopped.
     def operation_failed(self, message):
         self.failed_operation = True
         self.download_animation.stop()
@@ -314,6 +315,7 @@ class MainWindow(QMainWindow):
         self.append_log('ERROR: ' + message)
         QMessageBox.warning(self, 'Processing failed', message)
 
+    # Stop timing the operation and make the controls available again.
     def operation_finished(self):
         self.update_elapsed()
         self.timer.stop()
@@ -329,10 +331,12 @@ class MainWindow(QMainWindow):
         self.worker = None
         self.active_operation = None
 
+    # Show the time spent on the current download or extraction.
     def update_elapsed(self):
         if self.started is not None:
             self.elapsedLabel.setText(f'{int(time.monotonic() - self.started)}s elapsed')
 
+    # Display the metadata that is available for this video.
     def show_source_details(self, folder):
         fields = {'title':self.titleValueLabel, 'channel':self.channelValueLabel,
                   'duration_seconds':self.durationValueLabel, 'license':self.licenseValueLabel}
@@ -358,23 +362,28 @@ class MainWindow(QMainWindow):
                     value = str(value)
             label.setText(str(value) if value is not None and value != '' else 'Not available yet')
 
+    # Open the selected output with the desktop's usual application.
     def open_path(self, path):
         if not path.exists():
             QMessageBox.information(self, 'File unavailable', f'Could not find {path}')
         elif not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.resolve()))):
             QMessageBox.warning(self, 'Cannot open', f'Windows could not open {path}')
 
+    # Open the report saved for the current source.
     def open_report(self):
         if self.report_path:
             self.open_path(self.report_path)
 
+    # Take the user to the latest operation's output folder.
     def open_result_folder(self):
         if self.last_result:
             self.open_path(self.last_result.parent)
 
+    # Open the folder containing the current project.
     def open_project_folder(self):
         self.open_path(self.project_folder)
 
+    # Check whether the video folder can be renamed while this project is open.
     def rename_folder(self):
         if self.processing.audio is not None:
             QMessageBox.information(self, 'Audio review is loaded',
@@ -403,6 +412,7 @@ class MainWindow(QMainWindow):
             self.report_path = new_folder / self.report_path.relative_to(folder)
         self.append_log(f'Folder renamed: {new_folder}')
 
+    # Give the user a chance to keep the app open if a job is still running.
     def closeEvent(self, event):
         if self.worker is not None or self.processing.task is not None:
             event.ignore()
@@ -462,6 +472,7 @@ class MainWindow(QMainWindow):
         os._exit(0)
 
 
+# Create the main window and let Qt handle the desktop events.
 def main():
     app = QApplication(sys.argv)
     window = MainWindow()

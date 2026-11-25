@@ -1,15 +1,9 @@
-"""Estimated vocal stops must split preserved audio, even inside one VAD island.
+"""Give a simulated vocal track pauses at known points while the backing sound continues.
 
-Test guide
-----------
-envelope
-    Build a controlled sequence of vocal energy and quiet intervals.
-controlled_separator
-    Supply known vocal samples to the pause detector.
-VocalPhraseCuts
-    Check relative dips are gain invariant, sustained note and short dip do not force
-    cuts and related cases.
+Check which dips produce cuts and whether every exported candidate still maps to a
+continuous interval in the source.
 """
+
 import hashlib
 import json
 from pathlib import Path
@@ -28,6 +22,7 @@ import pause_based_segmentation as natural
 RATE=16000
 
 
+# Build a phrase with dips at known positions in its amplitude envelope.
 def envelope(pauses, seconds=40.):
     signal=np.full(round(seconds*RATE), .2, dtype=np.float32)
     for a,b in pauses:
@@ -35,12 +30,14 @@ def envelope(pauses, seconds=40.):
     return signal
 
 
+# Make a reproducible vocal track from the test waveform.
 def controlled_separator(wave, rate):
     # Singing pauses have residual stem energy ABOVE the old -45 dBFS ceiling.
     return np.where(wave>.15,.2,.02).astype(np.float32)
 
 
 class VocalPhraseCuts(unittest.TestCase):
+    # Turn the same phrase up and down and compare its proposed breaks.
     def test_relative_dips_are_gain_invariant(self):
         starts=np.arange(2000)*.02
         ends=starts+.02
@@ -51,6 +48,7 @@ class VocalPhraseCuts(unittest.TestCase):
             self.assertEqual([p['time'] for p in points],[10.,20.,30.])
             self.assertTrue(all(p['status']=='needs_boundary_review' for p in points))
 
+    # A held note and a very short dip should both stay inside the clip.
     def test_sustained_note_and_short_dip_do_not_force_cuts(self):
         starts=np.arange(2000)*.02; ends=starts+.02
         levels=np.full(len(starts),-14.)
@@ -61,6 +59,7 @@ class VocalPhraseCuts(unittest.TestCase):
         points=natural.vocal_pause_candidates(starts,ends,levels,np.full(len(starts),-14.))
         self.assertTrue(all(p['position']=='edge_context' for p in points))
 
+    # Keep a vocal break when accompaniment makes the speech detector stay active.
     def test_source_positive_vad_does_not_erase_vocal_pause_proposals(self):
         with tempfile.TemporaryDirectory() as d:
             path=Path(d)/'song.wav'; samples=envelope([(9.8,10.2),(19.8,20.2),(29.8,30.2)])
@@ -73,6 +72,7 @@ class VocalPhraseCuts(unittest.TestCase):
             self.assertEqual(len(checks[0]['boundary_candidates']),3)
             self.assertAlmostEqual(sum(b-a for a,b in islands),40.)
 
+    # Compare the exported vocal candidates with their continuous source intervals.
     def test_exporter_produces_continuous_review_clips(self):
         with tempfile.TemporaryDirectory() as d:
             root=Path(d);path=root/'song.wav'
@@ -100,6 +100,7 @@ class VocalPhraseCuts(unittest.TestCase):
                 np.testing.assert_array_equal(actual,original_samples[round(s['start']*RATE):round(s['end']*RATE)])
             self.assertEqual(original_hash,hashlib.sha256(path.read_bytes()).hexdigest())
 
+    # Cut at the outer pause and check that discarded material stays outside the WAV.
     def test_cut_at_outer_quiet_gap_does_not_reintroduce_removed_audio(self):
         checks=[dict(boundary_candidates=[dict(time=10.),dict(time=20.)])]
         self.assertEqual(natural.split_at_vocal_pauses([[0.,9.8],[10.2,30.]],checks),

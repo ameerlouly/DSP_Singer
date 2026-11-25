@@ -1,4 +1,9 @@
-"""Check timestamp collisions, repeated extractions and legacy project paths."""
+"""Save more than once for the same video and check where the outputs land.
+
+The tests cover timestamp collisions, cancelled dialogs and metadata saved under an
+older directory layout.
+"""
+
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
@@ -13,6 +18,7 @@ from video_download_and_audio_extraction import extract_audio, rename_video_fold
 
 
 class OutputFolderTests(unittest.TestCase):
+    # Try overlapping saves and cancel a dialog to check which directories remain.
     def test_simultaneous_saves_and_cancelled_dialog(self):
         with tempfile.TemporaryDirectory() as directory, patch('output_folders.datetime') as clock:
             clock.now.return_value = datetime(2026, 11, 25, 14, 3, 7)
@@ -25,6 +31,7 @@ class OutputFolderTests(unittest.TestCase):
             self.assertFalse(unused.exists())
             self.assertTrue(all(p.is_dir() for p in folders))
 
+    # Find a video's metadata in both the old layout and a dated run folder.
     def test_legacy_and_dated_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / 'video1'
@@ -39,6 +46,7 @@ class OutputFolderTests(unittest.TestCase):
             (renamed / 'metadata.json').write_text('{}')
             self.assertEqual(metadata_folder(renamed), renamed)
 
+    # Run extraction twice and make sure the first WAV is still on disk.
     @unittest.skipUnless(shutil.which('ffmpeg') and shutil.which('ffprobe'), 'requires FFmpeg')
     def test_extract_twice_keeps_both_recordings(self):
         with tempfile.TemporaryDirectory() as directory:

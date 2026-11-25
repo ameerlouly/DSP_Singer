@@ -1,11 +1,9 @@
-"""Optional real Transformers/processor smoke check with a tiny random model.
+"""Try the Cohere processor and decoder with a small randomly initialized model.
 
-Downloads only the processor/config/tokenizer files, not the 2.35 GB weights.
-This checks Arabic prompting, feature shapes, generation and text decoding;
-it does not measure recognition accuracy or CUDA/INT8 checkpoint behavior.
-
-The checks run in file order when this script is executed directly.
+This checks whether the installed Transformers APIs work together without needing the
+full recognition weights.
 """
+
 import sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))

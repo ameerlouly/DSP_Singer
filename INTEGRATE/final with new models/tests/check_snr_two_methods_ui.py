@@ -1,10 +1,9 @@
-"""Two-method Qt workflow with real numeric estimators, controlled source audio.
+"""Run both SNR methods through the quality page using controlled speech and noise.
 
-Test guide
-----------
-wait
-    Process Qt events until the active background task finishes.
+The checks follow threshold changes, manual corrections and saved results through the
+UI.
 """
+
 import os,sys,tempfile,time,json,csv,copy
 from pathlib import Path
 from unittest.mock import patch
@@ -18,6 +17,7 @@ import segment_review as review
 import clip_quality_assessment as snr
 import corpus_review_and_export as corpus
 app=QApplication([]);w=MainWindow(show_welcome=False);p=w.processing;errors=[]
+# Give the background calculation time to finish and deliver its result to the page.
 def wait():
  deadline=time.monotonic()+15
  while p.task is not None and time.monotonic()<deadline:app.processEvents();time.sleep(.01)

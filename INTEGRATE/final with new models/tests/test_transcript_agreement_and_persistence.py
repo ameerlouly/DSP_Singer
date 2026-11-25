@@ -1,17 +1,9 @@
-"""Test Arabic transcript comparison, input manifests and saved review state.
+"""Check the path from Arabic transcript comparison to a saved review.
 
-Test guide
-----------
-ArabicAgreementTests
-    Check normalization applies arabic rules and removes punctuation, agreement status
-    uses normalized cer and word distance.
-ManifestTests
-    Check step5 manifest preserves multiple source spans, manifest rejects spans
-    outside the source wav.
-PersistenceTests
-    Check review progress and original json are saved in csv, saved review can be
-    reopened for the same input pair and related cases.
+The manifest and CSV tests verify that each clip keeps its own source intervals, raw
+model outputs and final text when the project is reopened.
 """
+
 import sys, csv, json, math, tempfile, unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -19,6 +11,7 @@ from unittest.mock import patch
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 import transcript_agreement_and_io as pipeline
 class ArabicAgreementTests(unittest.TestCase):
+    # Compare Arabic spelling variants after normalizing marks, letters and punctuation.
     def test_normalization_applies_arabic_rules_and_removes_punctuation(self):
         self.assertEqual(
             pipeline.normalize_arabic("إِنَّ السَّلَامَـ، عَلَيْكُمْ!"),
@@ -29,6 +22,7 @@ class ArabicAgreementTests(unittest.TestCase):
             "مدرسه هدي",
         )
 
+    # Use known word and character differences to check the resulting review status.
     def test_agreement_status_uses_normalized_cer_and_word_distance(self):
         self.assertEqual(
             pipeline.compare_transcripts("أهلاً، بكم!", "اهلا بكم")[0],
@@ -48,6 +42,7 @@ class ArabicAgreementTests(unittest.TestCase):
 
 
 class ManifestTests(unittest.TestCase):
+    # Read a clip made from multiple intervals and check that every mapping survives.
     def test_step5_manifest_preserves_multiple_source_spans(self):
         payload = {
             "format": "speech_corpus_step5_inputs_v1",
@@ -85,6 +80,7 @@ class ManifestTests(unittest.TestCase):
         self.assertEqual(len(segments[0]["source_spans"]), 2)
         self.assertEqual(segments[0]["source_metadata"]["file"], "speech_001.wav")
 
+    # An interval beyond the end of the WAV should make the manifest fail validation.
     def test_manifest_rejects_spans_outside_the_source_wav(self):
         payload = {
             "segments": [{"segment_id": "bad", "start": 1, "end": 11}],
@@ -97,6 +93,7 @@ class ManifestTests(unittest.TestCase):
 
 
 class PersistenceTests(unittest.TestCase):
+    # Read the CSV back and check both the original data and the later review fields.
     def test_review_progress_and_original_json_are_saved_in_csv(self):
         manifest_path = Path("manifest.json")
         wav_path = Path("source.wav")
@@ -142,6 +139,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(json.loads(row["audit_log"]), audit_log)
         self.assertEqual(row["final_transcript"], "مرحبا")
 
+    # Reopen a saved review using the same audio and manifest it was created with.
     def test_saved_review_can_be_reopened_for_the_same_input_pair(self):
         manifest = {
             "format": "example",
@@ -177,6 +175,7 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(restored[0]["final_transcript"], "مرحبا")
         self.assertEqual(saved["audit_log"], [{"action": "save"}])
 
+    # Give each clip different words so a mix-up between records shows up on reload.
     def test_multiple_segments_keep_individual_saved_transcripts(self):
         manifest = {"format": "example", "segments": []}
         segments = []
@@ -215,6 +214,7 @@ class PersistenceTests(unittest.TestCase):
             ["النص الاول", "النص الثاني"],
         )
 
+    # Writing transcript decisions back should preserve the clip's segmentation status.
     def test_source_manifest_receives_review_fields_without_changing_clip_status(self):
         manifest = {
             "format": "speech_corpus_step5_inputs_v1",

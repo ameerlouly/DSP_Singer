@@ -1,18 +1,10 @@
-"""Estimate clip SNR, apply clean/noisy decisions and export reviewed quality results.
+"""Turn two SNR measurements into a reviewable clean/noisy decision.
 
-Function guide
---------------
-estimate_energy, estimate_wada, analyze_samples
-    Measure pause energy and WADA-SNR and retain estimator diagnostics.
-source_time_key, session_records
-    Build a chronological input list from approved clips and uncovered source spans.
-decision, calculate, reclassify
-    Apply a threshold to new measurements or to cached estimates when controls change.
-preserve_override, set_quality
-    Carry forward or change the named reviewer's quality override.
-corpus_fields, export_report
-    Prepare quality fields for the final corpus and save standalone quality reports.
+analyze_samples measures one clip, calculate works through a session, and reclassify
+reuses the scores when the threshold changes. export_report saves the decision rule
+and human corrections alongside the measurements.
 """
+
 from output_folders import new_run_folder
 import copy
 import csv
@@ -31,16 +23,19 @@ POLICIES=('conservative','energy','wada')
 DISAGREEMENT_DB=6.
 
 
+# Return the energy estimate together with any notes about the pause frames.
 def estimate_energy(samples,rate=16000,pause_intervals=None):
     result=energy_details(samples,rate,pause_intervals)
     return result['value_db'],'; '.join(result['notes']) or 'Energy estimate uses pause-frame background noise and active-minus-noise power.'
 
 
+# Return the WADA estimate and any caveats from the measurement.
 def estimate_wada(samples,rate=16000):
     result=wada_details(samples,rate)
     return result['value_db'],'; '.join(result['notes'])
 
 
+# Apply the selected threshold and decide which results need a listener.
 def decision(item,threshold=20.,policy='conservative',justification=''):
     threshold=float(threshold)
     if not math.isfinite(threshold) or not -50<=threshold<=100:raise ValueError('Threshold must be finite and between -50 and 100 dB.')
@@ -85,6 +80,7 @@ def decision(item,threshold=20.,policy='conservative',justification=''):
     return item
 
 
+# Measure the same samples both ways before assigning a quality label.
 def analyze_samples(samples,rate=16000,pause_intervals=None,*,content_label='speech',threshold=20.,policy='conservative',justification=''):
     energy=energy_details(samples,rate,pause_intervals);wada=wada_details(samples,rate)
     x=np.asarray(samples)
@@ -101,6 +97,7 @@ def source_time_key(record):
     return float(record['source_start']), float(record['source_end']), record['id']
 
 
+# Collect eligible clips and uncovered source intervals for the quality queue.
 def session_records(data,source,*,include_unresolved=True,for_transcription=False):
     queue=review.approved_playback_queue(data,source);items={x['id']:x for x in data['segments']};out=[]
     for path,a,b,label,ident in queue:
@@ -155,6 +152,7 @@ def session_records(data,source,*,include_unresolved=True,for_transcription=Fals
     return sorted(out, key=source_time_key)
 
 
+# Measure each item and tell the caller how far through the queue we are.
 def calculate(records,threshold,progress=None,*,policy='conservative',justification=''):
     if not records:raise ValueError('No approved clips or unresolved spans are available for SNR.')
     # Validate controls before file I/O, even if all WAVs are invalid.
@@ -183,6 +181,7 @@ def calculate(records,threshold,progress=None,*,policy='conservative',justificat
     return result
 
 
+# Changing the decision rule only needs the stored measurements.
 def reclassify(records,threshold,policy='conservative',justification=''):
     result=copy.deepcopy(records)
     for item in result:
@@ -191,6 +190,7 @@ def reclassify(records,threshold,policy='conservative',justification=''):
     return result
 
 
+# Keep the reviewer's correction if this is still the same audio.
 def preserve_override(current,previous):
     if previous and previous.get('override_by') and current.get('audio_sha256') and current['audio_sha256']==previous.get('audio_sha256') and current.get('content_label')==previous.get('content_label'):
         for key in ('override_by','override_reason','quality','quality_changes'):
@@ -199,6 +199,7 @@ def preserve_override(current,previous):
     return current
 
 
+# Record who changed the quality label and why, or restore the automatic choice.
 def set_quality(item,label,who,reason):
     if label not in (None,'clean','noisy') or not who.strip() or not reason.strip():
         raise ValueError('Choose clean/noisy and enter reviewer name and correction reason.')
@@ -218,6 +219,7 @@ def corpus_fields(item):
         snr_note=item.get('note',''),snr_analysis=copy.deepcopy(item),clean_noisy=item.get('quality','unavailable'))
 
 
+# Save both scores and the reason the reviewer chose this threshold.
 def export_report(records,threshold,directory,*,policy='conservative',justification=''):
     if not justification.strip():raise ValueError('Enter the final threshold justification before saving the SNR report.')
     records=reclassify(records,threshold,policy,justification)

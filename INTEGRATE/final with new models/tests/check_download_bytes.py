@@ -1,15 +1,15 @@
-"""Measured byte progress, stream weighting, estimate corrections and resume cases.
+"""Send known byte counts for multiple streams to the progress tracker.
 
-Test guide
-----------
-event
-    Build a simulated download progress callback for a stream.
+The event helper lets the checks reproduce changing size estimates, resumed downloads
+and the last step after transfer.
 """
+
 from pathlib import Path
 import sys
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from video_download_and_audio_extraction import DownloadProgress
 
+# Feed the tracker one event with the stream ID and byte counts a download would report.
 def event(tracker, ident, downloaded, total=None, status='downloading', estimate=None):
     tracker(dict(status=status, info_dict={'format_id':ident}, downloaded_bytes=downloaded,
                  total_bytes=total, total_bytes_estimate=estimate))

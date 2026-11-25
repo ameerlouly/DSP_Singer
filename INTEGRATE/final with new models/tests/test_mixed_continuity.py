@@ -1,13 +1,8 @@
-"""Protect mixed audio from speech-only VAD misses, without declaring lyrics present.
+"""Use tones and controlled voice tracks to check that mixed audio stays accounted for when speech detection misses it.
 
-Test guide
-----------
-tone
-    Generate a fixed-frequency synthetic test waveform.
-MixedContinuityTests
-    Check active mixed preserves internal leading trailing misses, total vad miss still
-    preserves mixed audio and related cases.
+The export tests follow that audio into a candidate or an unresolved span.
 """
+
 import hashlib
 import json
 import sys
@@ -26,20 +21,24 @@ import pause_based_segmentation as natural
 RATE = 16000
 
 
+# Make a simple tone with a known duration and level.
 def tone(seconds, amplitude=.15):
     t = np.arange(round(seconds * RATE)) / RATE
     return (amplitude * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
 
 
 class MixedContinuityTests(unittest.TestCase):
+    # Give each test its own place to write the synthetic source recording.
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.path = self.root / 'source.wav'
 
+    # Remove the recording and its temporary folder when the test finishes.
     def tearDown(self):
         self.directory.cleanup()
 
+    # Write the samples and run continuity protection with the supplied speech detections.
     def check(self, samples, islands, regions=None):
         sf.write(self.path, samples, RATE, subtype='PCM_16')
         duration = len(samples) / RATE
@@ -47,17 +46,20 @@ class MixedContinuityTests(unittest.TestCase):
         with sf.SoundFile(self.path) as audio:
             return natural.protect_mixed_continuity(audio, islands, 0., duration, regions)
 
+    # Look for lost audio at the beginning, middle and end of an active mixed region.
     def test_active_mixed_preserves_internal_leading_trailing_misses(self):
         result, checks = self.check(tone(12), [[2.,4.],[6.,8.]])
         self.assertEqual(result, [[0.,12.]])
         self.assertAlmostEqual(checks[0]['vad_missing_seconds_preserved'], 8.)
         self.assertFalse(checks[0]['quiet_intervals'])
 
+    # Even a complete miss by the speech detector should leave audible mixed audio for review.
     def test_total_vad_miss_still_preserves_mixed_audio(self):
         result, checks = self.check(tone(12), [])
         self.assertEqual(result, [[0.,12.]])
         self.assertEqual(checks[0]['vad_missing_seconds_preserved'], 12.)
 
+    # Give the detector a sustained quiet interval that can serve as a pause.
     def test_sustained_quiet_remains_available_as_pause(self):
         samples = tone(12)
         samples[round(5.5*RATE):6*RATE] = 0
@@ -65,17 +67,20 @@ class MixedContinuityTests(unittest.TestCase):
         self.assertEqual(result, [[0.,5.5],[6.,12.]])
         self.assertEqual(checks[0]['quiet_intervals'], [[5.5,6.]])
 
+    # A momentary dip in a note should keep the phrase together.
     def test_short_note_dip_is_not_a_cut(self):
         samples = tone(12)
         samples[5*RATE:round(5.1*RATE)] = 0
         result, _ = self.check(samples, [[0.,5.],[5.1,12.]])
         self.assertEqual(result, [[0.,12.]])
 
+    # A quieter recording can still contain continuous singing.
     def test_quiet_singing_not_suppressed_by_absolute_threshold_alone(self):
         result, checks = self.check(tone(12, .0003), [])
         self.assertEqual(result, [[0.,12.]])
         self.assertFalse(checks[0]['quiet_intervals'])
 
+    # Only intervals labeled mixed should receive this extra continuity treatment.
     def test_mixed_protection_does_not_override_speech_music_silence_labels(self):
         regions = [dict(start=0.,end=4.,label='speech'),dict(start=4.,end=8.,label='mixed'),
                    dict(start=8.,end=10.,label='music'),dict(start=10.,end=12.,label='silence')]
@@ -84,6 +89,7 @@ class MixedContinuityTests(unittest.TestCase):
         self.assertEqual(len(checks), 1)
         self.assertEqual(natural.eligible_blocks(regions), [[0.,8.]])
 
+    # Put the sound across a read boundary and leave a short final frame.
     def test_read_seam_and_partial_final_frame(self):
         samples = tone(31.013)
         samples[round(29.9*RATE):round(30.2*RATE)] = 0
@@ -91,11 +97,13 @@ class MixedContinuityTests(unittest.TestCase):
         self.assertEqual(result, [[0.,29.9],[30.2,31.013]])
         self.assertEqual(checks[0]['quiet_intervals'], [[29.9,30.2]])
 
+    # Plain silence should stay quiet throughout the check.
     def test_silence_is_not_promoted_to_active_audio(self):
         result, checks = self.check(np.zeros(12*RATE), [])
         self.assertEqual(result, [])
         self.assertEqual(checks[0]['quiet_intervals'], [[0.,12.]])
 
+    # Let the backing track continue while the separated voice takes a breath.
     def test_vocal_pause_can_be_found_while_backing_audio_continues(self):
         # Controlled separator: background is .1, background plus voice is .2.
         samples = np.full(12*RATE, .2, dtype=np.float32)
@@ -110,8 +118,10 @@ class MixedContinuityTests(unittest.TestCase):
         self.assertEqual(checks[0]['quiet_evidence'], 'separated_vocals_energy')
         self.assertIsNone(checks[0]['separation_error'])
 
+    # Keep the audio available for review if the separator fails or returns unusable data.
     def test_failed_or_invalid_separator_falls_back_to_preserving_audio(self):
         sf.write(self.path, tone(12), RATE, subtype='PCM_16')
+        # Raise an error deliberately to exercise the separator failure path.
         def fail(wave, rate):
             raise RuntimeError('Controlled separator failure')
         for separator in (fail, lambda wave, rate: wave[:-1]):
@@ -122,6 +132,7 @@ class MixedContinuityTests(unittest.TestCase):
             self.assertEqual(checks[0]['quiet_evidence'], 'original_mix_conservative')
             self.assertTrue(checks[0]['separation_error'])
 
+    # A silent separated stem shouldn't erase speech that the detector actually found.
     def test_separator_silence_cannot_erase_vad_positive_audio(self):
         sf.write(self.path, tone(12), RATE, subtype='PCM_16')
         with sf.SoundFile(self.path) as audio:
@@ -130,6 +141,7 @@ class MixedContinuityTests(unittest.TestCase):
                 separator=lambda wave, rate: np.zeros_like(wave))
         self.assertEqual(islands, [[0.,12.]])
 
+    # Export with a controlled detector result and read back the saved timeline.
     def export(self, module, seconds, detected):
         sf.write(self.path, tone(seconds), RATE, subtype='PCM_16')
         before = hashlib.sha256(self.path.read_bytes()).hexdigest()
@@ -148,12 +160,14 @@ class MixedContinuityTests(unittest.TestCase):
         self.assertTrue(all(s['status'].startswith('needs_review') for s in data['segments']))
         return data, Path(output['output_dir'])
 
+    # Account for missed audio even when neither edge makes a usable clip boundary.
     def test_exporter_preserves_missed_audio_when_natural_edges_are_missing(self):
         with self.subTest(module=natural.__name__):
             data, output = self.export(natural, 12., [[2.,4.],[6.,8.]])
             self.assertFalse(data['segments'])
             self.assertEqual([(u['start'],u['end']) for u in data['unresolved']], [(0.,12.)])
 
+    # A sustained vocal line without a safe break should remain available for review.
     def test_long_vocals_not_forced_into_fake_natural_pauses(self):
         data, _ = self.export(natural, 40., [])
         self.assertFalse(data['segments'])

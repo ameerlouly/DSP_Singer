@@ -1,17 +1,10 @@
-"""Load the Arabic INT8 Cohere recognizer on demand and transcribe a prepared waveform.
+"""Transcribe one prepared clip with the Arabic INT8 Cohere model.
 
-Function guide
---------------
-validate_audio
-    Check the mono waveform, sample rate, duration and finite samples before inference.
-load_cohere_model, stabilize_normalization
-    Load the checkpoint and keep normalization layers compatible with inference
-    precision.
-transcribe_cohere
-    Decode Arabic speech and detect incomplete generation before returning text.
-release_asr_model
-    Release model references and reclaim cached GPU memory between engines.
+load_cohere_model prepares the checkpoint and its normalization layers.
+transcribe_cohere checks the waveform and looks for an incomplete decode before
+returning the text. release_asr_model frees the model between runs.
 """
+
 from __future__ import annotations
 
 import gc
@@ -50,6 +43,7 @@ def stabilize_normalization(network: Any) -> int:
     return count
 
 
+# Check the rate, length and samples before passing the clip to Cohere.
 def validate_audio(audio: Any, sample_rate: int):
     import numpy as np
     samples = np.asarray(audio, dtype=np.float32)

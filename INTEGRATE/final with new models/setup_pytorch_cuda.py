@@ -1,17 +1,9 @@
-"""Prepare the project's Windows PyTorch environment for NVIDIA inference.
+"""Check which PyTorch runtime the project Python can use.
 
-Function guide
---------------
-probe_runtime
-    Check installed Torch and torchaudio in an isolated child process.
-nvidia_present
-    Query the driver for an available NVIDIA device.
-main
-    Check the runtime and install the matching CUDA wheels when setup requires it.
-
-Torch is probed in a child so Windows DLLs are not held open during pip repair.
-No NVIDIA driver or system-wide package is installed here.
+probe_runtime tests it in a separate process so Windows can release the loaded
+libraries. main decides whether a CUDA-capable PyTorch install is needed.
 """
+
 from __future__ import annotations
 import argparse
 import json
@@ -33,6 +25,7 @@ except Exception as exc:
 '''
 
 
+# Ask a separate Python process what this PyTorch installation can actually run.
 def probe_runtime(python=None):
     result = subprocess.run([python or sys.executable, '-c', PROBE], capture_output=True, text=True, timeout=90)
     if result.returncode:
@@ -43,6 +36,7 @@ def probe_runtime(python=None):
         return dict(installed=False, available=False, error='PyTorch probe returned no readable result.')
 
 
+# Check whether the NVIDIA utility can see a device on this machine.
 def nvidia_present():
     executable = shutil.which('nvidia-smi')
     if not executable:
@@ -52,6 +46,7 @@ def nvidia_present():
     return result.returncode == 0 and bool(result.stdout.strip())
 
 
+# Use the probe results to decide whether the project's PyTorch install needs changing.
 def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument('--check-only', action='store_true', help='Check without downloading/installing packages.')

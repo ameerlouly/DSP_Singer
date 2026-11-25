@@ -1,16 +1,10 @@
-"""PDF Step 6 examples and boundary cases; no model weights are downloaded.
+"""Use small Arabic examples to check which changes affect agreement.
 
-Test guide
-----------
-PDFNormalizationTests
-    Check required letter table and arabic punctuation, presentation forms decomposed
-    letters and invisible controls and related cases.
-PDFAgreementTests
-    Check agreement after normalization, two percent boundary and related cases.
-ReviewAndExportTests
-    Check raw text preserved automatic final and human override, unresolved word budget
-    uses full source seconds only and related cases.
+The cases cover letter variants, word edits, directional CER and the extra review
+allowance for longer unresolved clips. Other cases check that the original text and
+human decisions survive export.
 """
+
 import copy
 import csv
 import json
@@ -25,6 +19,8 @@ import corpus_review_and_export as corpus
 
 
 class PDFNormalizationTests(unittest.TestCase):
+    # Use examples of alef, taa marbuta, alif maqsura and punctuation to check the comparison
+    # text.
     def test_required_letter_table_and_arabic_punctuation(self):
         pairs = [
             ('إِنَّ السَّلَامَـ، عَلَيْكُمْ!', 'ان السلام عليكم'),
@@ -36,15 +32,18 @@ class PDFNormalizationTests(unittest.TestCase):
         for raw, expected in pairs:
             with self.subTest(raw=raw):self.assertEqual(asr.normalize_arabic(raw),expected)
 
+    # Different Unicode spellings of the same Arabic text should compare consistently.
     def test_presentation_forms_decomposed_letters_and_invisible_controls(self):
         self.assertEqual(asr.normalize_arabic('\ufef7 \ufefb ا\u0654 ا\u0655'), 'لا لا ا ا')
         self.assertEqual(asr.normalize_arabic('ه\u200dدى\u200f'), 'هدي')
         self.assertEqual(asr.normalize_arabic('س\u08f0لام'), 'سلام')
 
+    # Keep dialect words and hamzas that the normalization rule leaves distinct.
     def test_preserve_dialect_words_and_other_hamza_letters(self):
         self.assertEqual(asr.normalize_arabic('إزّيك؟ مش عايزة أروح دلوقتي!'), 'ازيك مش عايزه اروح دلوقتي')
         self.assertEqual(asr.normalize_arabic('سؤال بيئة شيء'), 'سؤال بيئه شيء')
 
+    # A second normalization pass should give the same text and leave the raw input intact.
     def test_idempotent_without_mutating_the_original(self):
         raw='إِنَّ مُدَرِّسَةَ هُدَى، كويسة!'
         once=asr.normalize_arabic(raw)
@@ -53,15 +52,18 @@ class PDFNormalizationTests(unittest.TestCase):
 
 
 class PDFAgreementTests(unittest.TestCase):
+    # Two outputs with the same comparison text should count as agreement.
     def test_agreement_after_normalization(self):
         r=asr.comparison_details('أهلاً، بكم!', 'اهلا بكم')
         self.assertEqual((r['automatic_status'],r['cer'],r['wer'],r['word_difference']),('accepted',0.,0.,0))
         self.assertEqual(r['comparison_engine'],'jiwer')
 
+    # Try both sides of the two-percent character-error cutoff.
     def test_two_percent_boundary(self):
         self.assertEqual(asr.compare_transcripts('ا'*50,'ا'*49+'ب')[0],'accepted')
         self.assertEqual(asr.compare_transcripts('ا'*49,'ا'*48+'ب')[0],'needs_review')
 
+    # Swap the reference text and check the denominator for each displayed CER.
     def test_each_model_cer_uses_the_other_normalized_text(self):
         r=asr.comparison_details('سلام','سلاما')
         self.assertAlmostEqual(r['cer_a_vs_b'],1/5)
@@ -70,6 +72,7 @@ class PDFAgreementTests(unittest.TestCase):
         self.assertEqual(r['cer_a_reference'],'normalized_transcript_b')
         self.assertEqual(r['cer_b_reference'],'normalized_transcript_a')
 
+    # A difference in transcript length alone should never choose the winning text.
     def test_lower_directional_cer_is_not_used_to_pick_a_winner(self):
         r=asr.comparison_details('ا'*49,'ا'*50)
         self.assertEqual(r['cer_a_vs_b'],.02)
@@ -79,6 +82,7 @@ class PDFAgreementTests(unittest.TestCase):
         self.assertEqual(r['automatic_transcript'],'')
         self.assertIn('No model selected',r['automatic_choice_reason'])
 
+    # An automatic choice should retain its spelling and a reason the reviewer can read.
     def test_agreement_choice_has_reason_and_preserves_original_spelling(self):
         r=asr.comparison_details('أهلاً، بكم!', 'اهلا بكم')
         self.assertEqual(r['cer_a_vs_b'],0.)
@@ -88,12 +92,14 @@ class PDFAgreementTests(unittest.TestCase):
         self.assertIn('tie-break',r['automatic_choice_reason'])
         self.assertIn('Identical after normalization',r['automatic_choice_reason'])
 
+    # An empty reference has no length to use as the denominator.
     def test_directional_percentage_is_undefined_for_an_empty_reference(self):
         r=asr.comparison_details('', 'اهلا')
         self.assertEqual(r['cer_a_vs_b'],1.)
         self.assertIsNone(r['cer_b_vs_a'])
         self.assertIsNone(r['automatic_choice'])
 
+    # Three edits leave the clip for a listener. The fourth puts it in the difficult group.
     def test_three_word_edits_require_human_choice_four_are_difficult(self):
         reference='واحد اتنين تلاته اربعه'
         three=asr.comparison_details(reference,'خمسه سته سبعه اربعه')
@@ -102,6 +108,7 @@ class PDFAgreementTests(unittest.TestCase):
         self.assertEqual((four['automatic_status'],four['word_difference']),('difficult',4))
         self.assertEqual(four['word_substitutions'],4)
 
+    # Count added and missing words as well as substitutions.
     def test_insertions_and_deletions_are_counted_too(self):
         insertion=asr.comparison_details('اهلا بكم','اهلا وسهلا بكم هنا')
         deletion=asr.comparison_details('اهلا وسهلا بكم هنا','اهلا بكم')
@@ -110,6 +117,7 @@ class PDFAgreementTests(unittest.TestCase):
         self.assertEqual(insertion['wer'],1.)
         self.assertEqual(deletion['wer'],.5)
 
+    # An empty answer or punctuation alone should never count as an accepted transcript.
     def test_empty_and_punctuation_only_outputs_are_never_accepted(self):
         for left,right in [('', ''),('؟!','ـَ'),('', 'اهلا بكم'),('اهلا بكم',''),('', 'واحد اتنين تلاته اربعه')]:
             with self.subTest(left=left,right=right):
@@ -118,16 +126,19 @@ class PDFAgreementTests(unittest.TestCase):
                 self.assertIn('empty',r['agreement_reason'])
         self.assertEqual(asr.comparison_details('', 'اهلا بكم')['word_insertions'],2)
 
+    # A missing scoring library should give a clear error.
     def test_jiwer_is_required_not_silently_replaced(self):
         with patch.dict(sys.modules,{'jiwer':None}):
             with self.assertRaisesRegex(RuntimeError,'jiwer 4'):asr.compare_transcripts('اهلا','اهلا')
 
 
 class ReviewAndExportTests(unittest.TestCase):
+    # Build a pair of Arabic transcripts with known normalization differences.
     def record(self):
         return dict(label='speech',transcript_a='مَدْرَسَة هدى',transcript_b='مدرسه هدي',
                     asr_a_done=True,asr_b_done=True,human_override=False,status='needs_review')
 
+    # Make an automatic choice, override it and check that both original texts survive.
     def test_raw_text_preserved_automatic_final_and_human_override(self):
         r=self.record();corpus.compare(r)
         self.assertEqual(r['status'],'accepted')
@@ -143,6 +154,7 @@ class ReviewAndExportTests(unittest.TestCase):
         self.assertEqual(r['final_transcript'],'مدرسة هدى بعد المراجعة')
         self.assertNotEqual(r['automatic_status'],'accepted')
 
+    # Check where the allowance changes as an unresolved clip gets longer.
     def test_unresolved_word_budget_uses_full_source_seconds_only(self):
         r=self.record()
         r.update(source_mode='unresolved_preview',start=42.,transcript_a='واحد اثنين ثلاثة أربعة',
@@ -164,6 +176,7 @@ class ReviewAndExportTests(unittest.TestCase):
         corpus.compare(r)
         self.assertIsNone(r['review_word_edit_limit'])
 
+    # An old score should disappear when one model still has work to do.
     def test_pending_model_clears_stale_automatic_metrics(self):
         r=self.record();corpus.compare(r);r['asr_b_done']=False;corpus.compare(r)
         self.assertIsNone(r['cer']);self.assertIsNone(r['wer'])
@@ -171,6 +184,7 @@ class ReviewAndExportTests(unittest.TestCase):
         self.assertIsNone(r['automatic_choice'])
         self.assertEqual(r['status'],'needs_review');self.assertEqual(r['final_transcript'],'')
 
+    # Read back the CSV and check the texts, scores and rules that explain the decision.
     def test_csv_has_raw_normalized_scores_and_policy(self):
         r=self.record();r['segment_id']='clip';corpus.compare(r)
         with tempfile.TemporaryDirectory() as d:

@@ -1,7 +1,8 @@
-"""Verify the download bar advances smoothly as byte estimates change.
+"""Feed progress estimates to the real download bar and watch how its displayed value changes.
 
-The checks run in file order when this script is executed directly.
+The checks cover animation, an unknown total, a fresh download and completion.
 """
+
 import os
 os.environ.setdefault('QT_QPA_PLATFORM','offscreen')
 from pathlib import Path

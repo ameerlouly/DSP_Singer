@@ -1,69 +1,10 @@
-"""Connect the Qt region, segment and audio-quality pages to the processing pipeline.
+"""Connect the region, segment and quality pages to the current recording.
 
-Function guide
---------------
-atomic_json, validate_regions
-    Save session JSON atomically and check that region boundaries form a valid
-    timeline.
-Task.run, start, task_result, task_error, task_finished
-    Run processing away from the UI thread and deliver results, errors and completion
-    to the page.
-eventFilter, fit_page_height, navigate
-    Fit the scroll area to the visible page and switch workspaces.
-table, table_batch, populate, selected, index, reviewer, guard, status, confirm_discard
-    Configure tables, identify selections and the reviewer, and report validation or
-    replacement decisions.
-start_auto_process, advance_auto_process, set_shared_controls_enabled
-    Sequence automated stages and manage shared controls while work is active.
-require_audio, choose_audio, set_audio, source_folder
-    Select the source WAV and locate its working directory.
-show_spectrogram, restore_regions, plot_spectrogram, analyze, approve_flagged_regions, redraw_regions, refresh_all
-    Compute and draw the spectrogram, run labeling and refresh the review tables.
-region_rows, region_edited, region_selected, clock, configure_region_preview, update_region_cursor_label,
-update_region_range_summary
-    Display the selected interval, source position and listening range.
-region_slider_changed, region_cursor_interval, seek_region_preview, mark_region_time,
-play_region_cursor, pause_region_preview
-    Seek within the region and mark or audition a subrange.
-region_mode_changed, entered_region_range, edit_region, apply_region_correction,
-split_region, merge_region, plot_press, plot_release
-    Edit labels and boundaries using fields, the plot or split/merge controls.
-clear_snr, invalidate_segments
-    Discard downstream results when their source changes.
-write_region_report, save_regions, load_regions, check_region_payload
-    Build, save and verify region review data before restoring it.
-generate_segments, set_session, load_candidates, segment_selected, segment_mode_changed
-    Generate or reopen pause-based candidates and show their editable bounds.
-part4_spec, configure_part4_preview, update_part4_summary, part4_slider_changed,
-part4_interval, seek_part4, mark_part4, play_part4_cursor, pause_part4,
-update_part4_playback_position
-    Map the segment or unresolved-span slider to the source or candidate being
-    auditioned.
-segment_cells, span_cells, update_cells, update_visible_spans, modified_session
-    Refresh affected Part 4 rows and continue reviewing the remaining source range.
-edit_segment, approve, exclude, resolve_overlaps
-    Record reviewer actions and maintain consistent approved intervals.
-unresolved_selected, add_manual, mark_unresolved, require_approved, export_segments
-    Review uncovered audio, create clips and export approved audio with its source
-    mapping.
-require_analysis_source, calculate_snr, snr_controls_changed, refresh_snr, check_snr,
-snr_cells, draw_snr_chart, override_quality
-    Estimate clip quality, apply the chosen decision rule and retain reviewer
-    corrections.
-save_snr, open_snr_report, load_snr, match_snr, set_snr_controls
-    Save or reopen SNR results and match them to the current source intervals.
-save_project, project_payload, open_project
-    Serialize and restore the processing and transcription workspaces together.
-play, media_ready, update_region_playback_position, playback_position,
-enforce_playback_end, stop_playback
-    Coordinate the media player, follow playback and stop at the requested endpoint.
-play_entered_region_range, play_region, play_region_edge, play_segment,
-play_segment_edge, play_unresolved, play_quality
-    Audition the selected source range, boundary, candidate or quality-review clip.
-
-All widgets and page layouts are editable in main_window.ui. Model inference and file-heavy
-work run on a QThread; all widget updates run on the main Qt thread.
+ProcessingWorkspace handles listening, boundary edits, approvals and session saves.
+Task runs slow work off the GUI thread. start_auto_process moves between stages after
+each result is ready.
 """
+
 from output_folders import new_run_folder, project_folder, save_dialog_folder, step_folder
 import copy
 import json
@@ -95,6 +36,7 @@ LABELS = ('speech', 'music', 'mixed', 'silence')
 COLORS = dict(speech='#268b80', music='#a77cbc', mixed='#e6ab54', silence='#a1afb4')
 
 
+# Swap in the finished JSON file so an interrupted save leaves the last good session intact.
 def atomic_json(path, data):
     path = Path(path)
     temp = None
@@ -109,6 +51,7 @@ def atomic_json(path, data):
             temp.unlink(missing_ok=True)
 
 
+# Check the region boundaries before trusting them as a timeline for this recording.
 def validate_regions(regions, duration):
     if not isinstance(regions, list) or not regions:
         raise ValueError('No region labels are available.')
@@ -129,12 +72,15 @@ def validate_regions(regions, duration):
 class Task(QThread):
     message = pyqtSignal(str)
 
+    # Keep the work and its result together so the window can pick them up when the thread
+    # finishes.
     def __init__(self, action, parent):
         super().__init__(parent)
         self.action = action
         self.value = None
         self.failure = None
 
+    # Run the job here and let the window handle either the result or the error.
     def run(self):
         try:
             self.value = self.action(self.message.emit)
@@ -143,6 +89,7 @@ class Task(QThread):
 
 
 class ProcessingWorkspace(QObject):
+    # Wire the region, segment and quality pages to the same recording and player.
     def __init__(self, window):
         super().__init__(window)
         self.window = window
@@ -278,11 +225,13 @@ class ProcessingWorkspace(QObject):
         from transcription_review_controller import ASRWorkspace
         self.asr = ASRWorkspace(self)
 
+    # A resize or layout change can change how far the active page should scroll.
     def eventFilter(self, watched, event):
         if event.type() in (QEvent.Type.LayoutRequest, QEvent.Type.Resize, QEvent.Type.Show):
             self.page_size_timer.start(0)
         return super().eventFilter(watched, event)
 
+    # Use the height of the visible page so the user can't scroll far past its last control.
     def fit_page_height(self):
         pages = self.window.pages
         page = pages.currentWidget()
@@ -293,6 +242,7 @@ class ProcessingWorkspace(QObject):
         if pages.minimumHeight() != height or pages.maximumHeight() != height:
             pages.setFixedHeight(height)
 
+    # Switch pages and bring the newly visible review controls up to date.
     def navigate(self, index):
         self.window.pages.setCurrentIndex(index)
         if hasattr(self,'asr'):
@@ -310,6 +260,7 @@ class ProcessingWorkspace(QObject):
         self.fit_page_height()
         self.window.contentScrollArea.verticalScrollBar().setValue(0)
 
+    # Give the review tables consistent headings, selection and row styling.
     @staticmethod
     def table(table):
         table.setAlternatingRowColors(True)
@@ -340,6 +291,7 @@ class ProcessingWorkspace(QObject):
                 header.setSectionResizeMode(i,QHeaderView.ResizeMode.ResizeToContents)
             table.setUpdatesEnabled(enabled)
 
+    # Fill the table in one batch to avoid a repaint for every cell.
     @staticmethod
     def populate(table, rows):
         with ProcessingWorkspace.table_batch(table):
@@ -347,22 +299,26 @@ class ProcessingWorkspace(QObject):
             for i,row in enumerate(rows):
                 ProcessingWorkspace.update_cells(table,i,[str(value) for value in row])
 
+    # Return selected rows in screen order, once each.
     @staticmethod
     def selected(table):
         return sorted({x.row() for x in table.selectionModel().selectedRows()})
 
+    # This action needs exactly one row. Report an empty or multiple selection to the caller.
     def index(self, table):
         rows = self.selected(table)
         if len(rows) != 1:
             raise ValueError('Select one row for this action.')
         return rows[0]
 
+    # Read the editor name before recording an edit.
     def reviewer(self):
         name = self.ui.reviewer.text().strip()
         if not name:
             raise ValueError('Enter your reviewer name first.')
         return name
 
+    # Keep conflicting jobs from running together and show the user why an action failed.
     def guard(self, action):
         if self.task is not None or self.window.worker is not None:
             self.status('Wait for the running operation to finish.')
@@ -372,16 +328,19 @@ class ProcessingWorkspace(QObject):
         except Exception as exc:
             QMessageBox.warning(self.window, 'Cannot complete action', str(exc))
 
+    # Put the latest message where the reviewer can see it.
     def status(self, text):
         self.ui.processingStatus.setText(text)
         self.window.statusbar.showMessage(text)
 
+    # Give the reviewer a chance to keep unsaved work before replacing the session.
     def confirm_discard(self):
         return not self.dirty or QMessageBox.question(self.window, 'Unsaved session',
             'Continue and discard unsaved changes? Save the session first to keep them.',
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No) == QMessageBox.StandardButton.Yes
 
+    # Send slow work to a thread and keep its completion callback for the GUI.
     def start(self, description, action, done):
         if self.task is not None or self.window.worker is not None:
             raise ValueError('An operation is already running.')
@@ -399,18 +358,21 @@ class ProcessingWorkspace(QObject):
         self.task.finished.connect(self.task.deleteLater)
         self.task.start()
 
+    # Give the finished result to the callback that requested it.
     def task_result(self, value):
         try:
             self.finished_callback(value)
         except Exception as exc:
             self.task_error(str(exc))
 
+    # Show the error and stop the automatic sequence at the stage that failed.
     def task_error(self, text):
         self.auto_stage = None
         self.status('Failed: ' + text)
         self.window.append_log('Parts 3–5: ' + text)
         QMessageBox.warning(self.window, 'Processing failed', text)
 
+    # Release the finished task so the next queued stage can start.
     def task_finished(self):
         # Keep the project locked until any result dialogs and UI updates finish.
         if self.task.failure is None:
@@ -430,6 +392,7 @@ class ProcessingWorkspace(QObject):
         if self.auto_stage:
             QTimer.singleShot(0, self.advance_auto_process)
 
+    # Get the editor name before the automatic sequence starts making review entries.
     def start_auto_process(self):
         self.require_audio()
         if self.task is not None or self.window.worker is not None:
@@ -450,6 +413,7 @@ class ProcessingWorkspace(QObject):
             self.auto_stage = None
             raise
 
+    # Start the next stage only after the previous one has delivered its data.
     def advance_auto_process(self):
         try:
             if self.auto_stage == 'label':
@@ -491,6 +455,7 @@ class ProcessingWorkspace(QObject):
 
     def set_shared_controls_enabled(self, enabled):
         """Support Designer rows with or without intermediate QWidget containers."""
+        # Walk child layouts too so nested controls follow the same enabled state.
         def visit(layout):
             for index in range(layout.count()):
                 item = layout.itemAt(index)
@@ -501,15 +466,18 @@ class ProcessingWorkspace(QObject):
         visit(self.ui.sharedSourceRowLayout)
         visit(self.ui.sharedReviewerRowLayout)
 
+    # Catch a missing or moved WAV before starting work on it.
     def require_audio(self):
         if self.audio is None or not self.audio.is_file():
             raise ValueError('Choose a WAV or extract audio on Source & Audio first.')
 
+    # Ask the user which WAV contains the original recording.
     def choose_audio(self):
         path, _ = QFileDialog.getOpenFileName(self.window, 'Choose original WAV', '', 'Audio WAV (*.wav)')
         if path:
             self.set_audio(path)
 
+    # Switch to the chosen recording and clear results tied to the previous one.
     def set_audio(self, path, ask=True):
         path = Path(path).resolve()
         if path == self.audio:
@@ -538,11 +506,13 @@ class ProcessingWorkspace(QObject):
         self.status(f'Ready: {path.name} · {self.duration:.2f} seconds')
         return True
 
+    # Prepare the spectral data for the WAV currently open.
     def show_spectrogram(self):
         self.require_audio()
         path = str(self.audio)
         self.start('Building spectrogram…', lambda log: calculate_spectrogram(path), self.plot_spectrogram)
 
+    # Draw the power values against time and frequency.
     def plot_spectrogram(self, data):
         self.plot_data = data
         times, frequencies, db, rate, duration, stride = data
@@ -555,6 +525,7 @@ class ProcessingWorkspace(QObject):
         self.redraw_regions()
         self.status('Spectrogram ready. Zoom with the toolbar; drag a shared boundary to adjust it.')
 
+    # Record who bulk-approved the flagged regions and when.
     @staticmethod
     def approve_flagged_regions(regions, changes, editor):
         stamp = review.utc_now()
@@ -569,6 +540,7 @@ class ProcessingWorkspace(QObject):
             approved += 1
         return approved
 
+    # Use the settings visible when the user starts labeling.
     def analyze(self, confirmed=False, approval_editor=None):
         self.require_audio()
         window_seconds, hop_seconds = analysis_settings(
@@ -578,6 +550,7 @@ class ProcessingWorkspace(QObject):
         path = str(self.audio)
         verify_vocals = self.ui.improveSinging.isChecked()
         duration,folder=self.duration,self.source_folder()
+        # Run the classifier and prepare the plot and report away from the GUI thread.
         def action(log):
             regions = classify_file(path, log, verify_vocals=verify_vocals,
                                     window_seconds=window_seconds, hop_seconds=hop_seconds)
@@ -587,6 +560,7 @@ class ProcessingWorkspace(QObject):
             plot=calculate_spectrogram(path)
             report=self.write_region_report(Path(path),duration,regions,changes,folder)
             return regions,changes,count,plot,report
+        # Bring the completed regions and their review history back into the editor.
         def done(result):
             self.regions,self.changes,count,plot,report=result
             regions=self.regions
@@ -604,6 +578,7 @@ class ProcessingWorkspace(QObject):
                 self.status(f'{len(regions)} regions labeled. Review flagged and mixed regions before cutting.')
         self.start('Loading PANNs; first run downloads its model…', action, done)
 
+    # Move the colored bands to the current region edges.
     def redraw_regions(self):
         # A collection paints all region bands in a single Matplotlib draw.
         vertices = [[(r['start'],0), (r['end'],0), (r['end'],1), (r['start'],1)] for r in self.regions]
@@ -619,6 +594,7 @@ class ProcessingWorkspace(QObject):
             self.region_overlay.set_facecolors(colors)
         self.canvas.draw_idle()
 
+    # Show the current and original labels alongside the model's score.
     def region_rows(self, first, count):
         table = self.ui.regionTable
         for row in range(first,first+count):
@@ -626,6 +602,7 @@ class ProcessingWorkspace(QObject):
             self.update_cells(table,row,[f"{r['start']:.4f}", f"{r['end']:.4f}", r['label'], r.get('auto_label',''),
                 confidence_text(r), 'Needs review' if r.get('needs_review') else
                 ('Edited' if r.get('manual_override') else ('Auto-approved' if r.get('auto_approved_by') else ''))])
+            # Use a dash for a missing score so it won't look like zero confidence.
             def score(key):
                 return '—' if r.get(key) is None else f'{r[key]:.3f}'
             details = (f'Speech: {score("speech_score")} | Music: {score("music_score")} | '
@@ -635,6 +612,7 @@ class ProcessingWorkspace(QObject):
             for col in range(table.columnCount()):
                 table.item(row,col).setToolTip(details)
 
+    # Region boundaries changed, so any segments cut from the old timeline are stale.
     def region_edited(self, first, removed, added, selected):
         self.invalidate_segments()
         self.dirty = True
@@ -649,6 +627,7 @@ class ProcessingWorkspace(QObject):
         self.region_selected()
         self.redraw_regions()
 
+    # Bring the review tables back in sync with the session.
     def refresh_all(self):
         with self.table_batch(self.ui.regionTable):
             self.ui.regionTable.setRowCount(len(self.regions))
@@ -664,6 +643,7 @@ class ProcessingWorkspace(QObject):
         for kind in self.part4_previews:
             self.configure_part4_preview(kind)
 
+    # Show the selected region's label and limits in the editor.
     def region_selected(self):
         rows = self.selected(self.ui.regionTable)
         if rows:
@@ -673,6 +653,7 @@ class ProcessingWorkspace(QObject):
             self.ui.regionEnd.setValue(r['end'])
         self.configure_region_preview(reset=True)
 
+    # Turn the player's millisecond position into a clock the listener can read.
     @staticmethod
     def clock(milliseconds):
         seconds, ms = divmod(max(0, int(milliseconds)), 1000)
@@ -680,6 +661,7 @@ class ProcessingWorkspace(QObject):
         hours, minutes = divmod(minutes, 60)
         return (f'{hours:02d}:' if hours else '') + f'{minutes:02d}:{seconds:02d}.{ms:03d}'
 
+    # Keep the listening slider inside the selected region.
     def configure_region_preview(self, reset=False):
         rows = self.selected(self.ui.regionTable)
         valid = self.audio is not None and len(rows) == 1 and rows[0] < len(self.regions)
@@ -708,9 +690,11 @@ class ProcessingWorkspace(QObject):
         self.update_region_cursor_label()
         self.update_region_range_summary()
 
+    # Show where playback will begin if the user presses Play from cursor.
     def update_region_cursor_label(self):
         self.ui.regionCursorLabel.setText('Position ' + self.clock(self.ui.regionSeekSlider.value()))
 
+    # Show how much source audio the two time fields currently select.
     def update_region_range_summary(self, *args):
         rows = self.selected(self.ui.regionTable)
         if self.audio is None or len(rows) != 1 or rows[0] >= len(self.regions):
@@ -727,11 +711,13 @@ class ProcessingWorkspace(QObject):
             f'  |  Duration {b - a:.3f} s'
         )
 
+    # Keep the position label and active playback in step with the slider.
     def region_slider_changed(self, value):
         self.update_region_cursor_label()
         if not self.ui.regionSeekSlider.isSliderDown():
             self.guard(self.seek_region_preview)
 
+    # Find the part of the selected region still ahead of the cursor.
     def region_cursor_interval(self):
         self.require_audio()
         region = self.regions[self.index(self.ui.regionTable)]
@@ -740,6 +726,7 @@ class ProcessingWorkspace(QObject):
         end = b if region['start'] <= a <= cursor < b <= region['end'] else region['end']
         return cursor, end
 
+    # Move the current preview to the position the listener picked.
     def seek_region_preview(self):
         if self.preview_bounds is None:
             return
@@ -753,6 +740,7 @@ class ProcessingWorkspace(QObject):
             self.pending_seek = self.play_range[0]
             self.player.setPosition(self.pending_seek)
 
+    # Use the listening cursor for the selected start or end field.
     def mark_region_time(self, end):
         self.require_audio()
         self.index(self.ui.regionTable)
@@ -760,12 +748,14 @@ class ProcessingWorkspace(QObject):
         widget.setValue(self.ui.regionSeekSlider.value() / 1000)
         self.update_region_range_summary()
 
+    # Play from the cursor to the end of the selected listening range.
     def play_region_cursor(self):
         cursor, end = self.region_cursor_interval()
         if cursor >= end:
             raise ValueError('Move the playback slider before the end of the region.')
         self.play(self.audio, cursor, end)
 
+    # Pause the active region preview or continue from the same place.
     def pause_region_preview(self):
         if self.play_owner in self.part4_previews or self.player is None or self.play_path != self.audio or not self.play_range:
             self.play_region_cursor()
@@ -780,6 +770,7 @@ class ProcessingWorkspace(QObject):
             self.play_timer.start(40)
         self.ui.pauseRegionPreview.setText('Resume' if self.play_paused else 'Pause')
 
+    # Explain which part of the timeline the selected correction mode will change.
     def region_mode_changed(self, index):
         self.ui.regionRangeHint.setText(
             'Enter source start/end times for the section you want to relabel. The surrounding audio keeps its current label.'
@@ -787,6 +778,7 @@ class ProcessingWorkspace(QObject):
             'Edit the entire selected region. Moving a shared boundary also adjusts the neighboring region.'
         )
 
+    # Check the user's start and end times before editing or playing the range.
     def entered_region_range(self, region):
         # The four-decimal display may round a sample-aligned boundary. Restore
         # that exact edge when the user leaves its displayed value unchanged.
@@ -798,6 +790,7 @@ class ProcessingWorkspace(QObject):
             values.append(value)
         return values
 
+    # Clear quality scores measured on a previous set of clips.
     def clear_snr(self):
         if self.snr_results or self.snr_snapshot is not None:
             self.snr_view_dirty = True
@@ -807,6 +800,7 @@ class ProcessingWorkspace(QObject):
         if self.snr_view_dirty and self.ui.pages.currentIndex() == 3:
             self.refresh_snr()
 
+    # A new region edit can change the audio used for segmentation, SNR and ASR.
     def invalidate_segments(self):
         if hasattr(self, 'asr'):
             self.asr.source_changed()
@@ -820,6 +814,7 @@ class ProcessingWorkspace(QObject):
                 self.configure_part4_preview(kind)
         self.clear_snr()
 
+    # Apply the selected edit and keep its details in the region history.
     def edit_region(self):
         i = self.index(self.ui.regionTable)
         name = self.reviewer()
@@ -845,6 +840,7 @@ class ProcessingWorkspace(QObject):
         self.region_edited(max(0,i-1), len(before), len(before), i)
         self.status('Region corrected. Earlier segment/SNR results cleared; regenerate from these labels.')
 
+    # Route the correction to the handler for the selected editing mode.
     def apply_region_correction(self):
         if self.ui.regionEditMode.currentIndex() == 1:
             self.edit_region()
@@ -867,6 +863,7 @@ class ProcessingWorkspace(QObject):
         self.region_edited(i, 1, len(pieces), i+selected)
         self.status('Selected range relabeled; surrounding regions preserved. Regenerate segments and SNR before continuing to ASR.')
 
+    # Let the reviewer hear the exact time range before applying a change.
     def play_entered_region_range(self):
         self.require_audio()
         i = self.index(self.ui.regionTable)
@@ -879,6 +876,7 @@ class ProcessingWorkspace(QObject):
             raise ValueError('Choose start/end times within the source WAV.')
         self.play(self.audio, start, end)
 
+    # Make two regions by cutting the selected one at its midpoint.
     def split_region(self):
         i = self.index(self.ui.regionTable);name = self.reviewer()
         old = copy.deepcopy(self.regions[i]);mid = round((old['start']+old['end'])*8000)/16000
@@ -890,6 +888,7 @@ class ProcessingWorkspace(QObject):
         self.changes.append(dict(time_utc=review.utc_now(),annotator=name,region_index=i,action='split',before=old,after=[left.copy(),right.copy()]))
         self.region_edited(i, 1, 2, i)
 
+    # Join the selected region to the one immediately after it.
     def merge_region(self):
         i = self.index(self.ui.regionTable);name = self.reviewer()
         if i+1>=len(self.regions): raise ValueError('There is no following region to merge.')
@@ -900,6 +899,7 @@ class ProcessingWorkspace(QObject):
         self.changes.append(dict(time_utc=review.utc_now(),annotator=name,region_index=i,action='merge',before=before,after=merged.copy()))
         self.region_edited(i, 2, 1, i)
 
+    # Remember which shared boundary the user grabbed on the plot.
     def plot_press(self, event):
         if event.inaxes != self.axes or event.xdata is None or not self.regions or self.task or self.window.worker:
             return
@@ -915,6 +915,7 @@ class ProcessingWorkspace(QObject):
                 if r['start']<=event.xdata<=r['end']:
                     self.ui.regionTable.selectRow(i);break
 
+    # Apply the new shared boundary when the user releases the mouse.
     def plot_release(self, event):
         i,self.drag_boundary=self.drag_boundary,None
         if i is not None and event.inaxes == self.axes and event.xdata is not None:
@@ -923,9 +924,11 @@ class ProcessingWorkspace(QObject):
             self.ui.regionEnd.setValue(event.xdata)
             self.guard(self.edit_region)
 
+    # Find the output folder for the project that owns this WAV.
     def source_folder(self):
         return project_folder(self.audio.parent)
 
+    # Put this version of the region report in its own dated folder.
     @staticmethod
     def write_region_report(audio,duration,regions,changes,destination):
         folder = new_run_folder(step_folder(destination, 'Labeled audio regions'))
@@ -938,17 +941,20 @@ class ProcessingWorkspace(QObject):
         save_report(path,payload)
         return path
 
+    # Take a snapshot of the timeline and edits before handing them to the save worker.
     def save_regions(self):
         self.require_audio()
         folder = QFileDialog.getExistingDirectory(self.window, 'Choose folder for region report', str(self.source_folder()))
         if not folder:
             return
         audio,duration,regions,changes=self.audio,self.duration,self.regions,self.changes
+        # Check the captured timeline before it goes into the report.
         def write(log):
             validate_regions(regions,duration)
             return self.write_region_report(audio,duration,regions,changes,folder)
         self.start('Saving region report…',write,lambda path:self.status('Region report saved: '+str(path)))
 
+    # Choose a saved region review to reopen against this WAV.
     def load_regions(self):
         self.require_audio()
         path,_=QFileDialog.getOpenFileName(self.window,'Open region review','','Region report (*.html *.htm *.json)')
@@ -956,6 +962,7 @@ class ProcessingWorkspace(QObject):
         if not self.confirm_discard():return
         audio=self.audio
         build_plot=self.plot_data is None
+        # Read the labels and prepare the audio plot together for the restored view.
         def read(log):
             data=load_review(path)
             self.check_region_payload(data)
@@ -963,6 +970,7 @@ class ProcessingWorkspace(QObject):
             return data,plot
         self.start('Opening region review…',read,self.restore_regions)
 
+    # Display the saved labels over the recording and restore the edit history.
     def restore_regions(self,result):
         data,plot=result
         self.regions=data['regions'];self.changes=data.get('changes',[])
@@ -975,11 +983,13 @@ class ProcessingWorkspace(QObject):
         else:self.plot_spectrogram(plot)
         self.status('Region review loaded.')
 
+    # Check the saved audio name, size and duration before placing labels on this recording.
     def check_region_payload(self,data):
         if data['audio_name']!=self.audio.name or data['audio_size']!=self.audio.stat().st_size or abs(data['duration_seconds']-self.duration)>1/16000:
             raise ValueError('Region report does not match the selected audio.')
         validate_regions(data['regions'],self.duration)
 
+    # Generate candidate clips from the current region timeline.
     def generate_segments(self, output_folder=None, confirmed=False):
         self.require_audio();validate_regions(self.regions,self.duration)
         if self.session and not confirmed and not self.confirm_discard():return
@@ -987,12 +997,14 @@ class ProcessingWorkspace(QObject):
         if not folder:return
         folder = str(step_folder(folder, 'Segmenting the speech'))
         regions=copy.deepcopy(self.regions);path=str(self.audio)
+        # Write the candidate set and load its review session for the segment page.
         def action(log):
             from pause_based_segmentation import export_candidates
             result=export_candidates(path,regions,folder,log)
             return review.load_session(Path(result['output_dir'])/'step4_segments.json',path)
         self.start('Finding speech and natural pause candidates…',action,self.set_session)
 
+    # Stop the old preview before showing a different set of candidates.
     def set_session(self,data):
         self.stop_playback()
         if hasattr(self,'asr'):
@@ -1001,6 +1013,7 @@ class ProcessingWorkspace(QObject):
         self.status(f"{len(data['segments'])} candidates · {len(data['unresolved'])} unresolved spans/gaps. Listen before approving.")
         self.window.navigationList.setCurrentRow(2)
 
+    # Open a previously generated candidate set for this recording.
     def load_candidates(self):
         self.require_audio()
         path,_=QFileDialog.getOpenFileName(self.window,'Open candidates or review_session.json','','Step 4 JSON (*.json)')
@@ -1009,6 +1022,7 @@ class ProcessingWorkspace(QObject):
         audio=self.audio
         self.start('Opening segment candidates…',lambda log:review.load_session(path,audio),self.set_session)
 
+    # Load the highlighted candidate into the segment editor.
     def segment_selected(self):
         rows=self.selected(self.ui.segmentTable)
         if len(rows) != 1 or not self.session:
@@ -1025,6 +1039,7 @@ class ProcessingWorkspace(QObject):
         self.ui.segmentStart.setValue(a);self.ui.segmentEnd.setValue(b)
         self.configure_part4_preview('segment', reset=True)
 
+    # Use the time limits appropriate to source editing or clip-local trimming.
     def segment_mode_changed(self):
         rows = self.selected(self.ui.segmentTable)
         if not self.session or len(rows) != 1:
@@ -1076,6 +1091,7 @@ class ProcessingWorkspace(QObject):
         return dict(path=Path(path).resolve(), bounds=(round(a * 1000), round(b * 1000)),
                     token=(item['id'], clock, a, b), clock=clock)
 
+    # Set the listening range for the chosen candidate or unresolved interval.
     def configure_part4_preview(self, kind, reset=False):
         spec = self.part4_spec(kind)
         old = self.part4_previews[kind]
@@ -1099,6 +1115,7 @@ class ProcessingWorkspace(QObject):
         getattr(self.ui, kind + 'SeekEnd').setText(self.clock(slider.maximum()))
         self.update_part4_summary(kind)
 
+    # Show the cursor, selected limits and listening duration together.
     def update_part4_summary(self, kind):
         slider = getattr(self.ui, kind + 'SeekSlider')
         getattr(self.ui, kind + 'CursorLabel').setText('Position ' + self.clock(slider.value()))
@@ -1114,11 +1131,13 @@ class ProcessingWorkspace(QObject):
                 text += '  |  Saved clips must be 5–15 s.'
         getattr(self.ui, kind + 'RangeSummary').setText(text)
 
+    # Update the display and move playback when the Part 4 slider changes.
     def part4_slider_changed(self, kind):
         self.update_part4_summary(kind)
         if not getattr(self.ui, kind + 'SeekSlider').isSliderDown():
             self.guard(lambda: self.seek_part4(kind))
 
+    # Translate the current preview selection into a filename and playback times.
     def part4_interval(self, kind, cursor=False):
         spec = self.part4_previews[kind]
         if spec is None:
@@ -1133,6 +1152,7 @@ class ProcessingWorkspace(QObject):
             raise ValueError('Choose start before end inside the listening range; move the slider before its end.')
         return spec['path'], a, b
 
+    # Seek only if this slider owns the active preview.
     def seek_part4(self, kind):
         if self.play_owner != kind or not self.play_range or self.player is None:
             return
@@ -1148,16 +1168,19 @@ class ProcessingWorkspace(QObject):
         self.pending_seek = self.play_range[0]
         self.player.setPosition(self.pending_seek)
 
+    # Copy the cursor to the chosen boundary field so the reviewer can mark a cut by ear.
     def mark_part4(self, kind, end):
         if self.part4_previews[kind] is None:
             raise ValueError('Select one item in this panel first.')
         getattr(self.ui, kind + ('End' if end else 'Start')).setValue(
             getattr(self.ui, kind + 'SeekSlider').value() / 1000)
 
+    # Play the rest of the selected preview from its cursor.
     def play_part4_cursor(self, kind):
         path, a, b = self.part4_interval(kind, cursor=True)
         self.play(path, a, b, owner=kind)
 
+    # Pause or continue the Part 4 preview that owns the player.
     def pause_part4(self, kind):
         if self.play_owner != kind or self.player is None or not self.play_range:
             self.play_part4_cursor(kind)
@@ -1172,6 +1195,7 @@ class ProcessingWorkspace(QObject):
             self.play_timer.start(40)
         getattr(self.ui, 'pause' + kind.title() + 'Preview').setText('Resume' if self.play_paused else 'Pause')
 
+    # Follow playback on the slider belonging to the current clip or span.
     def update_part4_playback_position(self, position):
         kind = self.play_owner
         if kind not in self.part4_previews:
@@ -1184,6 +1208,7 @@ class ProcessingWorkspace(QObject):
         slider.blockSignals(False)
         self.update_part4_summary(kind)
 
+    # Build the cells for one candidate using its source time and review status.
     @staticmethod
     def segment_cells(item):
         if item['source_mode'] == 'continuous_source':
@@ -1196,6 +1221,7 @@ class ProcessingWorkspace(QObject):
                 f'{duration:.4f}', item['label'], item['status'],
                 original.get('kind','vad_candidate') + ' · ' + '; '.join(original.get('notes',[]))]
 
+    # Build the cells for the uncovered part of a span that is still visible.
     def span_cells(self, span):
         _, item, start, end = span
         kept = list(review.transcription_ranges(self.session, item, start, end))
@@ -1203,6 +1229,7 @@ class ProcessingWorkspace(QObject):
         return [item['id'], f'{start:.4f}', f'{end:.4f}', item['label'], item['status'], setting,
                 item['original'].get('reason','')]
 
+    # Update a single row without rebuilding the whole table.
     @staticmethod
     def update_cells(table, row, values):
         for column, value in enumerate(values):
@@ -1216,6 +1243,7 @@ class ProcessingWorkspace(QObject):
         """Apply changed ranges only. Keep untouched Qt items and their selection."""
         table = self.ui.unresolvedTable
         spans = review.visible_unresolved(self.session)
+        # Compare rows by interval and identity so unchanged spans can keep their place.
         def keys(rows):
             return [(i, a, b) for i, _, a, b in rows]
         changes = SequenceMatcher(None, keys(self.visible_spans), keys(spans),
@@ -1250,6 +1278,7 @@ class ProcessingWorkspace(QObject):
         if focus is not None or self.part4_spec('unresolved') != self.part4_previews['unresolved']:
             self.unresolved_selected()
 
+    # Flag the session as edited and update the rows affected by the change.
     def modified_session(self, segment_rows=(), *, spans_changed=False, focus=None):
         if hasattr(self, 'asr'):
             self.asr.source_changed()
@@ -1271,6 +1300,7 @@ class ProcessingWorkspace(QObject):
             self.update_visible_spans(focus)
         self.status('Part 4 changed. Recalculate SNR to update the resolved clips and unresolved spans.')
 
+    # Apply the candidate's label and time fields in the selected editing mode.
     def edit_segment(self):
         i=self.index(self.ui.segmentTable);name=self.reviewer()
         a,b=self.ui.segmentStart.value(),self.ui.segmentEnd.value()
@@ -1288,12 +1318,14 @@ class ProcessingWorkspace(QObject):
         self.modified_session([i], spans_changed=bool(self.session['segments'][i].get('parent_unresolved_id')))
         self.segment_selected()
 
+    # Record approval for the candidates the reviewer highlighted.
     def approve(self):
         if not self.session:raise ValueError('Generate or open candidates first.')
         rows=self.selected(self.ui.segmentTable)
         count=review.approve_segments(self.session,rows,self.reviewer())
         self.modified_session(rows);self.status(f'{count} clips approved. Export or calculate SNR when ready.')
 
+    # Collect the pending candidates for one batch approval.
     def approve_all(self):
         if not self.session:
             raise ValueError('Generate or open candidates first.')
@@ -1305,6 +1337,7 @@ class ProcessingWorkspace(QObject):
         self.modified_session(rows)
         self.status(f'{count} pending candidates approved.')
 
+    # Set whether this unresolved interval goes on to recognition.
     def toggle_span_asr(self):
         row = self.index(self.ui.unresolvedTable)
         span = self.visible_spans[row]
@@ -1316,12 +1349,14 @@ class ProcessingWorkspace(QObject):
         self.asr.source_changed()
         self.status('Transcription preference updated for this range. Reload clips on the Transcription page.')
 
+    # Record which selected candidates the reviewer wants to leave out.
     def exclude(self):
         rows=self.selected(self.ui.segmentTable);name=self.reviewer()
         if not rows:raise ValueError('Select one or more clips.')
         for i in rows:review.exclude_segment(self.session,i,name)
         self.modified_session(rows, spans_changed=any(self.session['segments'][i].get('parent_unresolved_id') for i in rows))
 
+    # Resolve conflicts where approved clips occupy the same source time.
     def resolve_overlaps(self):
         if not self.session:raise ValueError('Open candidates first.')
         result=review.resolve_approved_overlaps(self.session,self.reviewer())
@@ -1329,6 +1364,7 @@ class ProcessingWorkspace(QObject):
         self.segment_selected()
         self.status(str(result))
 
+    # Show the selected uncovered interval in the listening and editing controls.
     def unresolved_selected(self):
         rows=self.selected(self.ui.unresolvedTable)
         self.ui.toggleSpanAsr.setText('Skip transcription')
@@ -1344,6 +1380,7 @@ class ProcessingWorkspace(QObject):
         if item['label'] in LABELS:self.ui.unresolvedLabel.setCurrentText(item['label'])
         self.configure_part4_preview('unresolved', reset=True)
 
+    # Turn the marked part of an unresolved interval into a candidate.
     def add_manual(self):
         rows = self.selected(self.ui.unresolvedTable)
         if len(rows)>1:
@@ -1363,6 +1400,7 @@ class ProcessingWorkspace(QObject):
         clip=self.session['segments'][index]
         self.modified_session([index], spans_changed=True, focus=(i,a,b,clip['source_start'],clip['source_end']))
 
+    # Record the chosen label and who reviewed this unresolved range.
     def mark_unresolved(self):
         row = self.index(self.ui.unresolvedTable)
         i, _, a, b = self.visible_spans[row]
@@ -1374,6 +1412,7 @@ class ProcessingWorkspace(QObject):
         start,end=review.unresolved_bounds(self.session['unresolved'][i])
         self.modified_session(spans_changed=True, focus=(i,a,b,start,end))
 
+    # Require at least one approved clip and check that approvals don't overlap.
     def require_approved(self):
         self.require_audio()
         if not self.session:raise ValueError('Generate or load candidates and approve clips first.')
@@ -1382,17 +1421,20 @@ class ProcessingWorkspace(QObject):
         if not any(s['status']=='approved' for s in self.session['segments']):
             raise ValueError('Approve at least one clip first.')
 
+    # Write the reviewed clips with the information needed to find their original samples.
     def export_segments(self):
         self.require_approved()
         folder=QFileDialog.getExistingDirectory(self.window,'Export approved WAV files',str(self.source_folder()))
         if not folder:return
         folder = str(step_folder(folder, 'Segmenting the speech'))
         snapshot=copy.deepcopy(self.session);path=str(self.audio)
+        # Show where the exported WAVs were saved and open the folder.
         def done(result):
             self.status(f"Exported {result['exported']} approved clips to {result['output_dir']}. Pending spans: {result['pending_unresolved']}.")
             self.window.open_path(Path(result['output_dir']))
         self.start('Exporting reviewed clips and source mappings…',lambda log:review.save_and_export(snapshot,path,folder),done)
 
+    # Check that this session has audio that can go through quality analysis.
     def require_analysis_source(self):
         self.require_audio()
         if not self.session:
@@ -1400,15 +1442,18 @@ class ProcessingWorkspace(QObject):
         if any(item['status']=='approved' for item in self.session['segments']):
             self.require_approved()
 
+    # Run both SNR measurements on the current set of eligible intervals.
     def calculate_snr(self):
         self.require_analysis_source()
         snapshot=copy.deepcopy(self.session);path=str(self.audio);threshold=self.ui.snrThreshold.value()
         previous={r['id']:copy.deepcopy(r) for r in self.snr_results}
         policy=snr.POLICIES[self.ui.snrPolicy.currentIndex()]
         justification=self.ui.snrJustification.text().strip()
+        # Build the analysis queue from the captured session and measure each item.
         def action(log):
             records=snr.session_records(snapshot,path)
             return snr.calculate(records,threshold,lambda n,total:log(f'Calculating pause-energy + WADA-SNR: {n} / {total}'),policy=policy,justification=justification)
+        # Reapply any valid reviewer corrections before displaying the new measurements.
         def done(records):
             for item in records:snr.preserve_override(item,previous.get(item['id']))
             self.snr_results=records;self.snr_snapshot=snapshot;self.applied_threshold=threshold
@@ -1417,6 +1462,7 @@ class ProcessingWorkspace(QObject):
             self.status(f'{len(records)} two-method SNR results ready; {sum(r.get("review_required",True) for r in records)} need quality review.')
         self.start('Calculating SNR for approved clips and unresolved spans…',action,done)
 
+    # Reuse the measured scores when the user changes the threshold or decision rule.
     def snr_controls_changed(self,*args):
         threshold=self.ui.snrThreshold.value()
         policy=snr.POLICIES[max(0,self.ui.snrPolicy.currentIndex())]
@@ -1429,14 +1475,17 @@ class ProcessingWorkspace(QObject):
             self.snr_report=None;self.dirty=True;self.refresh_snr()
             self.status('Cached SNR estimates reclassified. Human quality corrections were preserved.')
 
+    # Show the latest quality decisions on the SNR page.
     def refresh_snr(self):
         self.snr_view_dirty = False
         if not hasattr(self,'histogram'):return
         self.populate(self.ui.snrTable,[self.snr_cells(r) for r in self.snr_results])
         self.draw_snr_chart()
 
+    # Lay out the two estimates, decision and review details in one table row.
     @staticmethod
     def snr_cells(r):
+        # Show a missing estimate explicitly so it can't be read as 0 dB.
         def number(value):return 'Unavailable' if value is None else f'{value:.2f}'
         bound=(r.get('wada_details') or {}).get('bound')
         wada=number(r.get('wada_snr_db'))
@@ -1446,6 +1495,7 @@ class ProcessingWorkspace(QObject):
             number(r.get('energy_snr_db',r.get('snr_db'))),wada,number(r.get('snr_db')),
             r['automatic_quality'],r['quality'],r.get('review_status','Legacy: recalculate'),basis,r['note']]
 
+    # Redraw the charts using the measurements currently on screen.
     def draw_snr_chart(self):
         self.histogram.clear();a,b=self.histogram.subplots(1,2)
         for key,label,color in [('energy_snr_db','Pause energy','#157A6E'),('wada_snr_db','WADA-SNR','#7C3AED')]:
@@ -1457,10 +1507,12 @@ class ProcessingWorkspace(QObject):
         self.quality_bars=b.bar(labels,counts,color=['#268b80','#e6ab54','#a1afb4']);b.set(title='Reviewed quality',ylabel='Clips')
         self.hist_canvas.draw_idle()
 
+    # Catch results that belong to an earlier version of the clip list.
     def check_snr(self):
         if not self.snr_results or not review.same_snr_source(self.snr_snapshot,self.session):
             raise ValueError('Clips changed or no results are loaded. Calculate SNR again.')
 
+    # Save the reviewer's clean/noisy choice or restore the automatic label.
     def override_quality(self,label):
         self.check_snr();rows=self.selected(self.ui.snrTable);who=self.reviewer();why=self.ui.overrideReason.text().strip()
         if not rows or not why:raise ValueError('Select clips and enter the correction reason.')
@@ -1476,6 +1528,7 @@ class ProcessingWorkspace(QObject):
         self.hist_canvas.draw_idle()
         self.dirty=True;self.status('Quality corrections recorded. Save the session or updated report.')
 
+    # Save the SNR results together with the reason for the selected threshold.
     def save_snr(self):
         self.check_snr()
         self.snr_controls_changed()
@@ -1484,20 +1537,24 @@ class ProcessingWorkspace(QObject):
         if not folder:return
         folder = str(step_folder(folder, 'Audio quality SNR'))
         records,threshold,policy,reason=self.snr_results,self.applied_threshold,self.snr_policy,self.snr_justification
+        # Remember which HTML report the Open report button should use.
         def done(paths):
             self.snr_report=Path(paths[0])
             self.status('Saved SNR reports: '+str(self.snr_report))
         self.start('Saving SNR reports…',lambda log:snr.export_report(records,threshold,folder,policy=policy,justification=reason),done)
 
+    # Open the saved quality report for this session.
     def open_snr_report(self):
         if not self.snr_report:raise ValueError('Save the SNR report first.')
         self.window.open_path(self.snr_report)
 
+    # Ask which saved quality results to reload for this audio.
     def load_snr(self):
         self.require_analysis_source()
         path,_=QFileDialog.getOpenFileName(self.window,'Open SNR review','','SNR JSON (*.json)')
         if not path:return
         session,audio=self.session,self.audio
+        # Read the scores and apply the decision settings stored with them.
         def read(log):
             payload=json.loads(Path(path).read_text(encoding='utf-8-sig'))
             if payload.get('format') not in ('speech_corpus_snr_v1','speech_corpus_snr_v2'):raise ValueError('Not a supported SNR report.')
@@ -1506,15 +1563,18 @@ class ProcessingWorkspace(QObject):
             if not math.isfinite(threshold) or not -50<=threshold<=100:raise ValueError('Invalid SNR threshold.')
             policy=payload.get('decision_policy','energy');justification=payload.get('threshold_justification','')
             return snr.reclassify(records,threshold,policy,justification),threshold,policy,justification,copy.deepcopy(session)
+        # Put the restored scores and threshold back on the quality page.
         def done(result):
             self.snr_results,self.applied_threshold,self.snr_policy,self.snr_justification,self.snr_snapshot=result
             self.set_snr_controls();self.snr_report=Path(path).with_suffix('.html')
             self.dirty=True;self.refresh_snr();self.status('SNR review loaded.')
         self.start('Opening SNR review…',read,done)
 
+    # Check that the saved results belong to these clips and this recording.
     def match_snr(self,records):
         return self.validate_saved_snr(records,self.session,self.audio)
 
+    # Match saved measurements to their source intervals before reusing them.
     @staticmethod
     def validate_saved_snr(records,session,audio):
         # Earlier reports contain only approved clips. They can still be resumed.
@@ -1534,6 +1594,7 @@ class ProcessingWorkspace(QObject):
             if r['quality'] not in ('clean','noisy','unavailable'):raise ValueError('Invalid quality label.')
         return records
 
+    # Restore the controls together so intermediate values don't trigger recalculation.
     def set_snr_controls(self):
         for widget in (self.ui.snrThreshold,self.ui.snrPolicy,self.ui.snrJustification):widget.blockSignals(True)
         self.ui.snrThreshold.setValue(self.applied_threshold)
@@ -1541,20 +1602,24 @@ class ProcessingWorkspace(QObject):
         self.ui.snrJustification.setText(self.snr_justification)
         for widget in (self.ui.snrThreshold,self.ui.snrPolicy,self.ui.snrJustification):widget.blockSignals(False)
 
+    # Capture the processing pages and transcript review in the same save.
     def save_project(self):
         self.require_audio()
         with save_dialog_folder(self.source_folder() / 'Sessions') as folder:
             path,_=QFileDialog.getSaveFileName(self.window,'Save complete review session',str(folder / (self.audio.stem+'_session.json')),'Review session (*.json)')
             if not path:return
         payload=self.project_payload(snapshot=False)
+        # Create the folder and safely replace the session file with the captured data.
         def write(log):
             Path(path).parent.mkdir(parents=True,exist_ok=True)
             atomic_json(path,payload)
+        # Mark the project saved after the write succeeds.
         def done(_):
             self.dirty=False
             self.status('Complete review session saved: '+path)
         self.start('Saving review session…',write,done)
 
+    # Collect the state that needs to survive closing the app.
     def project_payload(self, *, snapshot=True, include_asr=True):
         capture=copy.deepcopy if snapshot else lambda value:value
         self.require_audio()
@@ -1568,11 +1633,13 @@ class ProcessingWorkspace(QObject):
                     panns_inputs=dict(window=self.ui.pannsWindowInput.text(), hop=self.ui.pannsHopInput.text()),
                     asr=self.asr.payload(snapshot=snapshot) if include_asr and hasattr(self,'asr') else None)
 
+    # Choose a saved session to reopen.
     def open_project(self):
         path,_=QFileDialog.getOpenFileName(self.window,'Open complete review session','','Review session (*.json)')
         if not path:return
         if not self.confirm_discard():return
         cached_audio=self.audio if self.plot_data is not None else None
+        # Prepare its recording, quality results and plot before updating the window.
         def read(log):
             data=json.loads(Path(path).read_text(encoding='utf-8-sig'))
             if data.get('format')!='speech_corpus_qt_session_v1':raise ValueError('Not a combined PyQt session.')
@@ -1595,6 +1662,7 @@ class ProcessingWorkspace(QObject):
             return data, audio, prepared, plot, quality
         self.start('Opening review session…',read,self.restore_project)
 
+    # Restore both the processing pages and the transcript editor.
     def restore_project(self,result):
         data,audio,prepared,plot,quality=result
         self.set_audio(audio,ask=False)
@@ -1616,6 +1684,7 @@ class ProcessingWorkspace(QObject):
         else:self.redraw_regions()
         self.status('Session restored.')
 
+    # Play just the requested part of a recording.
     def play(self,path,a,b,owner=None):
         if b<=a:raise ValueError('No playable audio in the selected interval.')
         path = Path(path).resolve()
@@ -1647,6 +1716,7 @@ class ProcessingWorkspace(QObject):
             self.player.setSource(url)
         self.play_timer.start(40)
 
+    # Wait for the media to load before seeking to the requested start time.
     def media_ready(self,status):
         if status==QMediaPlayer.MediaStatus.LoadedMedia and self.play_range:
             self.player.setPosition(self.pending_seek if self.pending_seek is not None else self.play_range[0])
@@ -1656,6 +1726,7 @@ class ProcessingWorkspace(QObject):
             self.update_part4_playback_position(self.play_range[1])
             self.stop_playback()
 
+    # Keep the region's listening cursor aligned with playback.
     def update_region_playback_position(self, position):
         slider = self.ui.regionSeekSlider
         if self.play_owner in self.part4_previews or self.play_path != self.audio or self.preview_bounds is None or slider.isSliderDown():
@@ -1665,14 +1736,17 @@ class ProcessingWorkspace(QObject):
         slider.blockSignals(False)
         self.update_region_cursor_label()
 
+    # Send each position update to the preview controls that need it.
     def playback_position(self,position):
         self.update_region_playback_position(position)
         self.update_part4_playback_position(position)
         if self.play_range and position>=self.play_range[1]:self.stop_playback()
 
+    # Stop at the marked endpoint so playback doesn't spill into the next clip.
     def enforce_playback_end(self):
         if self.play_range and self.player is not None:self.playback_position(self.player.position())
 
+    # Release the current listening range and stop the player.
     def stop_playback(self):
         self.play_range=None
         self.play_path=None
@@ -1685,23 +1759,29 @@ class ProcessingWorkspace(QObject):
         for kind in self.part4_previews:
             getattr(self.ui, 'pause' + kind.title() + 'Preview').setText('Pause / resume')
 
+    # Play the highlighted region from start to finish.
     def play_region(self):
         r=self.regions[self.index(self.ui.regionTable)];self.play(self.audio,r['start'],r['end'])
 
+    # Play a little source audio on either side of the chosen region edge.
     def play_region_edge(self,end):
         r=self.regions[self.index(self.ui.regionTable)];t=r['end' if end else 'start'];self.play(self.audio,t-1,t+1)
 
+    # Play the candidate interval currently shown in the segment editor.
     def play_segment(self):
         path,a,b=self.part4_interval('segment')
         self.play(path,a,b,owner='segment')
 
+    # Listen across the candidate's cut in the original recording.
     def play_segment_edge(self,end):
         item=self.session['segments'][self.index(self.ui.segmentTable)];t=item['source_end' if end else 'source_start']
         self.play(self.audio,t-1,t+1)
 
+    # Play the highlighted unresolved span so the reviewer can decide what to keep.
     def play_unresolved(self):
         path,a,b=self.part4_interval('unresolved')
         self.play(path,a,b,owner='unresolved')
 
+    # Play the audio behind the selected quality measurement.
     def play_quality(self):
         self.check_snr();r=self.snr_results[self.index(self.ui.snrTable)];self.play(r['path'],r['read_start'],r['read_end'])

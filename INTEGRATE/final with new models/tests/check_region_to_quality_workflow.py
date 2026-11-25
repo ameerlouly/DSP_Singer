@@ -1,12 +1,9 @@
-"""Exercise the region, segmentation and SNR pages together using controlled speech intervals.
+"""Follow a recording from region review to candidate approval and SNR.
 
-Test guide
-----------
-wait
-    Process Qt events until the active background task finishes.
-select_all
-    Select every candidate row for a batch review.
+Fixed speech intervals give the test known boundaries while the Qt controls, clip
+export and quality calculations run together.
 """
+
 import copy
 import json
 import os
@@ -40,12 +37,14 @@ for index in (1,2,3):
  assert w.pages.currentIndex()==index
  assert w.sharedControlsFrame.isVisible()
 
+# Wait for the worker while letting the Qt window process its signals.
 def wait():
  deadline=time.monotonic()+15
  while p.task is not None and time.monotonic()<deadline:
   app.processEvents();time.sleep(.01)
  assert p.task is None,'Background task timed out'
 
+# Select every candidate so the test follows the batch approval path.
 def select_all(table):
  table.clearSelection()
  for row in range(table.rowCount()):
@@ -75,6 +74,7 @@ with tempfile.TemporaryDirectory() as d, patch.object(QMessageBox,'warning',side
  assert p.plot_data is not None
  fake_torch=types.ModuleType('torch');fake_torch.set_num_threads=lambda n:None
  fake_vad=types.ModuleType('silero_vad');fake_vad.load_silero_vad=lambda:object()
+ # Use known speech intervals so the expected clip boundaries are reproducible.
  def islands(audio,start,end,model,log,pause_ms=200):
   return [[.5,6],[6.6,12.2]] if start<10 else [[20.5,26.5],[27,33],[33.6,39]]
  with patch.dict(sys.modules,torch=fake_torch,silero_vad=fake_vad),patch.object(cuts,'detect_speech',side_effect=islands),patch.object(QFileDialog,'getExistingDirectory',return_value=str(root)):

@@ -1,20 +1,19 @@
-"""Load Qwen on first transcription and decode one prepared speech waveform.
+"""Transcribe a waveform with Qwen.
 
-Function guide
---------------
-load_qwen_model
-    Load the processor and recognizer on the available device with a compatible
-    precision.
-transcribe_qwen
-    Generate the transcript and return only tokens produced for the audio.
+load_qwen_model fetches or reuses the processor and weights and selects a device.
+transcribe_qwen sends the audio to the model and returns the words it generated for
+this clip.
 """
+
 MODEL_ID = 'Qwen/Qwen3-ASR-1.7B-hf'
 
 
+# Load Qwen and its processor together, choosing a precision the device can use.
 def load_qwen_model(model_name, progress, stop_event=None):
     import torch
     from transformers import AutoProcessor, Qwen3ASRForConditionalGeneration
 
+    # Honor cancellation between the steps that load the model.
     def check_stop():
         if stop_event is not None and stop_event.is_set():
             raise InterruptedError('Qwen loading stopped.')
@@ -38,6 +37,7 @@ def load_qwen_model(model_name, progress, stop_event=None):
     return {'processor': processor, 'model': model}
 
 
+# Decode the generated part of the sequence so the prompt stays out of the transcript.
 def transcribe_qwen(bundle, audio):
     import torch
     processor = bundle['processor']

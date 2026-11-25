@@ -1,12 +1,9 @@
-"""Regression checks for songs classified as music when Speech scores are low.
+"""Feed the classifier known combinations of speech, music and singing scores.
 
-Inference outputs are controlled fixtures; this does not measure model accuracy.
-
-Test guide
-----------
-VocalLabeling
-    Check decisions, each vocal class is used with shuffled indices and related cases.
+The tests also follow voice evidence through later region merges, manual edits and
+reports.
 """
+
 import copy
 from pathlib import Path
 import sys
@@ -25,6 +22,7 @@ from region_review_report import save_report, load_review
 
 
 class VocalLabeling(unittest.TestCase):
+    # Try controlled sound-event scores and check the chosen content label.
     def test_decisions(self):
         cases = [
             ('instrumental', .02, .95, .01, 'music', False),
@@ -45,13 +43,16 @@ class VocalLabeling(unittest.TestCase):
                 if vocal >= tagging.VOCAL_THRESHOLD:
                     self.assertIn('no lyrics were recognized', note)
 
+    # Run the classifier with known scores and keep a record of its inference calls.
     def infer(self, names, vectors, silence=False):
         calls = []
 
         class Tagger:
+            # Start the fake model at its first set of scores.
             def __init__(self, **kwargs):
                 self.index = 0
 
+            # Return the next controlled model output for this audio window.
             def inference(self, audio):
                 self_shape = audio.shape
                 if self_shape != (1, 64000):
@@ -76,6 +77,7 @@ class VocalLabeling(unittest.TestCase):
                 regions = tagging.classify_file(wav, verify_vocals=False)
         return regions, calls
 
+    # Shuffle the tag list to make sure voice classes are found by name.
     def test_each_vocal_class_is_used_with_shuffled_indices(self):
         # High genre/instrument/synthetic scores must not count as real vocal evidence.
         names = ['Guitar', 'Music', *reversed(tagging.VOCAL_CLASSES),
@@ -98,16 +100,19 @@ class VocalLabeling(unittest.TestCase):
                 self.assertEqual(instrumental[0]['label'], 'music')
                 self.assertFalse(instrumental[0]['needs_review'])
 
+    # Leave out the vocal tags and check the diagnostic from the classifier.
     def test_missing_vocal_categories_fail_clearly(self):
         with self.assertRaisesRegex(RuntimeError, 'no singing/vocal classes'):
             self.infer(['Speech', 'Music'], [[.01, .9]])
 
+    # A silent window shouldn't cost an extra vocal inference call.
     def test_silence_bypasses_vocal_inference(self):
         regions, calls = self.infer(['Speech', 'Music', 'Singing'], [[.01, .9, .9]], silence=True)
         self.assertEqual(regions[0]['label'], 'silence')
         self.assertIsNone(regions[0]['vocal_score'])
         self.assertEqual(calls, [])
 
+    # Follow a voice score through a merge, a range edit and the saved report.
     def test_merge_edit_and_report_preserve_vocal_evidence(self):
         regions, calls = self.infer(['Rapping', 'Speech', 'Music', 'Singing'],
                                     [[.01, .02, .9, .8], [.7, .02, .9, .01]])

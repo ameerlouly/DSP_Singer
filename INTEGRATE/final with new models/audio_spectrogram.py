@@ -1,10 +1,9 @@
-"""Compute the time-frequency image used by the region review page.
+"""Build the image behind the colored region labels.
 
-Function guide
---------------
-calculate_spectrogram
-    Read audio and return plot coordinates, power levels and source timing.
+calculate_spectrogram reads the WAV in blocks and returns time, frequency and relative
+power. Long recordings share the same display budget as short ones.
 """
+
 import math
 import numpy as np
 import soundfile as sf

@@ -1,12 +1,9 @@
-"""Slider/range preview workflow without requiring an audio device or codec.
+"""Exercise the listening controls for candidates and unresolved spans.
 
-Test guide
-----------
-Signal
-    Deliver simulated player events to connected callbacks.
-Player
-    Reproduce seeking, pausing and playback without an audio device.
+A simulated player supplies position and load events so the test can seek, mark
+boundaries and stop playback at a known time.
 """
+
 import os
 from pathlib import Path
 import sys
@@ -23,12 +20,15 @@ from speech_corpus_app import MainWindow
 
 
 class Signal:
+    # Start with no listeners attached to this signal.
     def __init__(self):
         self.callbacks = []
 
+    # Remember which callback should receive a player event.
     def connect(self, callback):
         self.callbacks.append(callback)
 
+    # Deliver this event to all the connected callbacks.
     def emit(self, *args):
         for callback in self.callbacks:
             callback(*args)
@@ -37,6 +37,7 @@ class Signal:
 class Player:
     MediaStatus = QMediaPlayer.MediaStatus
 
+    # Set up a player with a known source, clock and playback state.
     def __init__(self, parent):
         self.mediaStatusChanged = Signal()
         self.positionChanged = Signal()
@@ -46,37 +47,47 @@ class Player:
         self.status = self.MediaStatus.NoMedia
         self.state = 'stopped'
 
+    # Accept the audio output connection without using a real device.
     def setAudioOutput(self, output):
         pass
 
+    # Return the URL the simulated player is using.
     def source(self):
         return self._source
 
+    # Changing the simulated source also moves its cursor to the beginning.
     def setSource(self, source):
         self._source = source
         self.status = self.MediaStatus.LoadingMedia
         self.setPosition(0)
 
+    # Tell the controller that the simulated media has finished loading.
     def loaded(self):
         self.status = self.MediaStatus.LoadedMedia
         self.mediaStatusChanged.emit(self.status)
 
+    # Report the simulated load status to the controller.
     def mediaStatus(self):
         return self.status
 
+    # Read the test player's clock in milliseconds.
     def position(self):
         return self._position
 
+    # Move the clock and notify the controller, as a seek would do.
     def setPosition(self, value):
         self._position = value
         self.positionChanged.emit(value)
 
+    # Make the simulated player enter its playing state.
     def play(self):
         self.state = 'playing'
 
+    # Leave the cursor in place while simulated playback is paused.
     def pause(self):
         self.state = 'paused'
 
+    # Stop the simulated player and rewind its clock.
     def stop(self):
         self.state = 'stopped'
         self.setPosition(0)
