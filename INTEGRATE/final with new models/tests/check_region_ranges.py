@@ -88,6 +88,7 @@ class RangeEdits(unittest.TestCase):
 
 
 def check_qt_workflow():
+    import time
     import numpy as np
     import soundfile as sf
     from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
@@ -104,7 +105,9 @@ def check_qt_workflow():
             patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.Yes):
         root = Path(folder)
         wav = root / 'source.wav'
-        sf.write(wav, np.zeros(190 * RATE), RATE, subtype='PCM_16')
+        samples = np.zeros(190 * RATE)
+        samples[RATE:2*RATE] = .2 * np.sin(2*np.pi*1000*np.arange(RATE)/RATE)
+        sf.write(wav, samples, RATE, subtype='PCM_16')
         assert p.set_audio(wav)
         window.reviewer.setText('Range reviewer')
         p.regions = [dict(start=0., end=12., label='silence'),
@@ -147,9 +150,9 @@ def check_qt_workflow():
         assert len(warnings) == 1 and p.regions == before and p.changes == history
         warnings.clear()
 
-        report = root / 'Labeled audio regions' / 'source_regions.html'
         with patch.object(QFileDialog, 'getExistingDirectory', return_value=str(root)):
             p.save_regions()
+        report, = (root / 'Labeled audio regions').glob('*/source_regions.html')
         assert load_review(report)['regions'] == p.regions
         project = root / 'session.json'
         with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(project), '')):
@@ -157,7 +160,33 @@ def check_qt_workflow():
         p.regions = []
         with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(project), '')):
             p.open_project()
-        assert p.regions == before and p.changes == history
+        def check_restored_plot():
+            deadline = time.monotonic() + 10
+            while p.task is not None and time.monotonic() < deadline:
+                app.processEvents()
+                time.sleep(.01)
+            assert p.task is None and p.regions == before and p.changes == history
+            _, frequencies, db, *_ = p.plot_data
+            assert frequencies[np.argmax(db.max(axis=1))] == 1000
+            assert p.axes.get_ylim() == (0., RATE/2) and p.axes.get_ylabel() == 'Frequency (Hz)'
+            assert p.figure.axes[1].get_ylabel() == 'Power relative to peak (dB)'
+            assert len(p.axes.collections) == 1 and len(p.patches) == len(before)
+
+        check_restored_plot()
+        # Open the HTML before displaying a spectrogram for this WAV.
+        other = root / 'other.wav'
+        sf.write(other, np.zeros(RATE), RATE, subtype='PCM_16')
+        p.set_audio(other, ask=False)
+        p.set_audio(wav, ask=False)
+        with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(report), '')):
+            p.load_regions()
+        check_restored_plot()
+        # Opening the same report again reuses the mesh; overlays appear only once.
+        existing = p.axes.collections[0]
+        with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(report), '')):
+            p.load_regions()
+        assert p.task is None and p.axes.collections[0] is existing
+        check_restored_plot()
 
         # Legacy boundary mode still adjusts the neighbor rather than splitting.
         window.regionTable.selectRow(1)

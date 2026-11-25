@@ -23,6 +23,8 @@ tools/ffmpeg/bin/*.dll
 
 # Generated project output
 videos/
+Download video/
+Sessions/
 Extract audio/
 Labeled audio regions/
 Segmenting the speech/

@@ -18,6 +18,7 @@ DownloadProgress.__call__, finishing, postprocess
 WavFormat, extract_audio
     Validate the requested PCM format and extract audio with FFmpeg.
 """
+from output_folders import metadata_folder, new_run_folder, project_folder, step_folder
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -518,7 +519,7 @@ def recover_legacy_html_metadata(report_path):
 
 def update_license(video_folder, license_name, evidence_note=None, log=print):
     """Record a manual license review without downloading the video again."""
-    folder = Path(video_folder)
+    folder = metadata_folder(video_folder)
     record_path = folder / 'metadata.json'
     if record_path.is_file():
         data = json.loads(record_path.read_text(encoding='utf-8'))
@@ -596,7 +597,7 @@ def create_video_folder(output_root, folder_name):
 def rename_video_folder(folder, new_name):
     folder = Path(folder)
     new_name = validate_folder_name(new_name)
-    if not folder.is_dir() or not (folder / 'metadata.html').is_file():
+    if not folder.is_dir() or not (metadata_folder(folder) / 'metadata.html').is_file():
         raise ValueError('Choose a completed download folder.')
     if folder.name == new_name:
         return folder
@@ -776,7 +777,8 @@ def download_video(url, output_root='data', log=print, *, folder_name=None,
             raise ValueError('Use a single, finished video URL, not a playlist.')
         if info.get('is_live'):
             raise ValueError('Choose a finished video instead of a live stream.')
-        folder = create_video_folder(output_root, folder_name)
+        project = create_video_folder(output_root, folder_name)
+        folder = new_run_folder(project / 'Download video')
         log(f'Output folder: {folder}')
         # Configure the destination only after metadata validation succeeds.
         downloader.params['outtmpl']['default'] = str(folder / 'source.%(ext)s')
@@ -852,8 +854,7 @@ def extract_audio(video_path, log=print, *, wav_format=CORPUS_FORMAT):
     codec = PCM_CODECS[bits]
     layout = 'mono' if channels == 1 else 'stereo'
     suffix = '_16k_mono' if wav_format == CORPUS_FORMAT else f'_{rate}Hz_{layout}_{bits}bit'
-    output_folder = video.parent / 'Extract audio'
-    output_folder.mkdir(parents=True, exist_ok=True)
+    output_folder = new_run_folder(step_folder(project_folder(video.parent), 'Extract audio'))
     output = output_folder / f'{video.stem}{suffix}.wav'
     log(f'Extracting the first audio track as {rate} Hz, {layout}, {bits}-bit PCM...')
     with NamedTemporaryFile(dir=output.parent, prefix='.extract-', suffix='.wav', delete=False) as tmp:

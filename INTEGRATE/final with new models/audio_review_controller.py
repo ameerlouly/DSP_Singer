@@ -17,7 +17,7 @@ start_auto_process, advance_auto_process, set_shared_controls_enabled
     Sequence automated stages and manage shared controls while work is active.
 require_audio, choose_audio, set_audio, source_folder
     Select the source WAV and locate its working directory.
-show_spectrogram, plot_spectrogram, analyze, redraw_regions, refresh_all
+show_spectrogram, restore_region_plot, plot_spectrogram, analyze, approve_flagged_regions, redraw_regions, refresh_all
     Compute and draw the spectrogram, run labeling and refresh the review tables.
 region_selected, clock, configure_region_preview, update_region_cursor_label,
 update_region_range_summary
@@ -62,6 +62,7 @@ play_segment_edge, play_unresolved, play_quality
 All widgets and page layouts are editable in main_window.ui. Model inference and file-heavy
 work run on a QThread; all widget updates run on the main Qt thread.
 """
+from output_folders import new_run_folder, project_folder, save_dialog_folder, step_folder
 import copy
 import json
 import math
@@ -71,14 +72,14 @@ from pathlib import Path
 from PyQt6.QtCore import QEvent, QObject, QThread, QTimer, QUrl, QLocale, pyqtSignal
 from PyQt6.QtGui import QDoubleValidator
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PyQt6.QtWidgets import (QAbstractItemView, QFileDialog, QHeaderView,
+from PyQt6.QtWidgets import (QAbstractItemView, QFileDialog, QHeaderView, QInputDialog,
                             QMessageBox)
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 import soundfile as sf
 
 from audio_spectrogram import calculate_spectrogram
-from region_review_report import load_review, save_report
+from region_review_report import load_review, save_report, confidence_text
 from audio_region_classifier import classify_file, analysis_settings, recorded_analysis_settings
 from region_editing import relabel_range
 import segment_review as review
@@ -146,8 +147,6 @@ class ProcessingWorkspace(QObject):
         self.snr_report = None
         self.task = None
         self.auto_stage = None
-        self.auto_waiting = False
-        self.auto_source = None
         self.dirty = False
         self.play_range = None
         self.play_path = None
@@ -368,7 +367,6 @@ class ProcessingWorkspace(QObject):
 
     def task_error(self, text):
         self.auto_stage = None
-        self.auto_waiting = False
         self.status('Failed: ' + text)
         self.window.append_log('Parts 3–5: ' + text)
         QMessageBox.warning(self.window, 'Processing failed', text)
@@ -391,26 +389,18 @@ class ProcessingWorkspace(QObject):
         self.require_audio()
         if self.task is not None or self.window.worker is not None:
             raise ValueError('Wait for the current operation to finish.')
-        if self.auto_waiting and self.auto_source == self.audio:
-            self.require_analysis_source()
-            if not snr.session_records(self.session, self.audio):
-                raise ValueError('Approve at least one candidate or keep an unresolved span before continuing.')
-            self.auto_waiting = False
-            self.auto_stage = 'snr'
-            try:
-                self.calculate_snr()
-            except Exception:
-                self.auto_stage = None
-                self.auto_waiting = True
-                raise
-            return
         if not self.confirm_discard():
             return
-        self.auto_source = self.audio
-        self.auto_waiting = False
+        editor, accepted = QInputDialog.getText(self.window, 'Auto process', 'Editor name:', text=self.ui.reviewer.text().strip())
+        if not accepted:
+            return
+        editor = editor.strip()
+        if not editor:
+            raise ValueError('Enter an editor name to start Auto process.')
+        self.ui.reviewer.setText(editor)
         self.auto_stage = 'label'
         try:
-            self.analyze(confirmed=True)
+            self.analyze(confirmed=True, approval_editor=editor)
         except Exception:
             self.auto_stage = None
             raise
@@ -421,18 +411,15 @@ class ProcessingWorkspace(QObject):
                 self.auto_stage = 'segments'
                 self.generate_segments(output_folder=self.source_folder(), confirmed=True)
             elif self.auto_stage == 'segments':
-                self.auto_stage = None
-                self.auto_waiting = True
-                self.status('Review the segment boundaries, then return to Source & Audio and click Auto process again.')
-                QMessageBox.information(self.window, 'Review segment boundaries',
-                    'Automatic labels and segment candidates are ready. Review the labels and listen to the segment boundaries. '
-                    'Approve suitable segments, then click Auto process again to calculate SNR and transcribe.')
+                self.session['analyze_pending_candidates'] = True
+                self.auto_stage = 'snr'
+                self.calculate_snr()
             elif self.auto_stage == 'snr':
                 self.asr.sync_current()
                 self.auto_stage = 'asr'
                 self.asr.transcribe(False)
                 if self.task is None:
-                    self.auto_stage = None
+                    self.advance_auto_process()
             elif self.auto_stage == 'asr':
                 self.auto_stage = None
                 self.window.navigationList.setCurrentRow(4)
@@ -440,13 +427,18 @@ class ProcessingWorkspace(QObject):
                 if self.asr.stop_event.is_set() or errors:
                     self.status('Transcription stopped or had errors. Check Transcription and Activity before continuing.')
                 else:
-                    self.window.append_log('Automatic processing finished. Review ASR results, quality and any unresolved spans.')
-                    self.status('Automatic processing finished. Review the transcripts and audio quality.')
+                    pending = [i for i, row in enumerate(self.asr.records) if row.get('status') == 'needs_review'
+                               and row.get('asr_a_done') and row.get('asr_b_done') and not row.get('human_override')]
+                    message = 'Automatic processing finished.'
+                    if pending:
+                        self.ui.asrTable.selectRow(pending[0])
+                        message += f' {len(pending)} transcript(s) await your choice. Listen and choose Qwen or Cohere, or enter a correction.'
+                    self.window.append_log(message)
+                    self.status(message)
             elif self.auto_stage is not None:
                 raise ValueError('Unknown automatic processing stage.')
         except Exception as error:
             self.auto_stage = None
-            self.auto_waiting = False
             self.task_error(str(error))
 
     def set_shared_controls_enabled(self, enabled):
@@ -488,6 +480,7 @@ class ProcessingWorkspace(QObject):
         self.session = None
         self.clear_snr()
         self.plot_data = None
+        self.patches = []
         self.figure.clear()
         self.axes = self.figure.add_subplot(111)
         self.axes.set_title('Click Show spectrogram to display this recording')
@@ -502,6 +495,15 @@ class ProcessingWorkspace(QObject):
         path = str(self.audio)
         self.start('Building spectrogram…', lambda log: calculate_spectrogram(path), self.plot_spectrogram)
 
+    def restore_region_plot(self):
+        """Restore saved overlays on the current WAV's spectrum, building it if needed."""
+        if self.plot_data is not None or not self.regions:
+            self.redraw_regions()
+        else:
+            self.axes.set_title('Building spectrogram…')
+            self.canvas.draw_idle()
+            self.show_spectrogram()
+
     def plot_spectrogram(self, data):
         self.plot_data = data
         times, frequencies, db, rate, duration, stride = data
@@ -514,7 +516,20 @@ class ProcessingWorkspace(QObject):
         self.redraw_regions()
         self.status('Spectrogram ready. Zoom with the toolbar; drag a shared boundary to adjust it.')
 
-    def analyze(self, confirmed=False):
+    def approve_flagged_regions(self, editor):
+        stamp = review.utc_now()
+        approved = 0
+        for index, region in enumerate(self.regions):
+            if not region.get('needs_review'):
+                continue
+            region.update(needs_review=False, auto_approved_by=editor)
+            self.changes.append(dict(time_utc=stamp, annotator=editor, region_index=index,
+                                     action='auto_approve_region', start=region['start'],
+                                     end=region['end'], label=region['label']))
+            approved += 1
+        return approved
+
+    def analyze(self, confirmed=False, approval_editor=None):
         self.require_audio()
         window_seconds, hop_seconds = analysis_settings(
             self.ui.pannsWindowInput.text(), self.ui.pannsHopInput.text())
@@ -530,6 +545,9 @@ class ProcessingWorkspace(QObject):
             regions, plot = result
             validate_regions(regions, self.duration)
             self.regions, self.changes = regions, []
+            if approval_editor:
+                count = self.approve_flagged_regions(approval_editor)
+                self.window.append_log(f'Part 3: {count} flagged regions auto-approved by {approval_editor}.')
             self.session = None
             self.clear_snr()
             self.dirty = True
@@ -537,7 +555,10 @@ class ProcessingWorkspace(QObject):
             self.plot_spectrogram(plot)
             report = self.write_region_report()
             self.window.append_log(f'Region report saved: {report}')
-            self.status(f'{len(regions)} regions labeled. Review flagged and mixed regions before cutting.')
+            if approval_editor:
+                self.status(f'Part 3 complete. {count} regions auto-approved by {approval_editor}.')
+            else:
+                self.status(f'{len(regions)} regions labeled. Review flagged and mixed regions before cutting.')
         self.start('Loading PANNs; first run downloads its model…', action, done)
 
     def redraw_regions(self):
@@ -556,8 +577,8 @@ class ProcessingWorkspace(QObject):
     def refresh_all(self):
         self.populate(self.ui.regionTable, [
             [f"{r['start']:.4f}", f"{r['end']:.4f}", r['label'], r.get('auto_label',''),
-             '—' if r.get('auto_confidence') is None else f"{r['auto_confidence']:.3f}",
-             'Needs review' if r.get('needs_review') else ('Edited' if r.get('manual_override') else '')]
+             confidence_text(r),
+             'Needs review' if r.get('needs_review') else ('Edited' if r.get('manual_override') else ('Auto-approved' if r.get('auto_approved_by') else ''))]
             for r in self.regions])
         for row, region in enumerate(self.regions):
             def score(key):
@@ -845,12 +866,10 @@ class ProcessingWorkspace(QObject):
             self.guard(self.edit_region)
 
     def source_folder(self):
-        folder = self.audio.parent
-        return folder.parent if folder.name == 'Extract audio' else folder
+        return project_folder(self.audio.parent)
 
-    def write_region_report(self):
-        folder = self.source_folder() / 'Labeled audio regions'
-        folder.mkdir(parents=True, exist_ok=True)
+    def write_region_report(self, destination=None):
+        folder = new_run_folder(step_folder(destination or self.source_folder(), 'Labeled audio regions'))
         path = folder / (self.audio.stem + '_regions.html')
         save_report(path, self.region_payload())
         return path
@@ -868,10 +887,7 @@ class ProcessingWorkspace(QObject):
         folder = QFileDialog.getExistingDirectory(self.window, 'Choose folder for region report', str(self.source_folder()))
         if not folder:
             return
-        target = Path(folder) / 'Labeled audio regions'
-        target.mkdir(parents=True, exist_ok=True)
-        path = target / (self.audio.stem + '_regions.html')
-        save_report(path, self.region_payload())
+        path = self.write_region_report(folder)
         self.status('Region report saved: ' + str(path))
 
     def load_regions(self):
@@ -886,8 +902,9 @@ class ProcessingWorkspace(QObject):
         if config:
             self.ui.pannsWindowInput.setText(f'{config["window_seconds"]:g}')
             self.ui.pannsHopInput.setText(f'{config["hop_seconds"]:g}')
-        self.invalidate_segments();self.dirty=True;self.refresh_all();self.redraw_regions()
-        self.status('Region review loaded. Show spectrogram if needed.')
+        self.invalidate_segments();self.dirty=True;self.refresh_all()
+        self.status('Region review loaded.')
+        self.restore_region_plot()
 
     def check_region_payload(self,data):
         if data['audio_name']!=self.audio.name or data['audio_size']!=self.audio.stat().st_size or abs(data['duration_seconds']-self.duration)>1/16000:
@@ -899,7 +916,7 @@ class ProcessingWorkspace(QObject):
         if self.session and not confirmed and not self.confirm_discard():return
         folder = str(output_folder) if output_folder is not None else QFileDialog.getExistingDirectory(self.window,'Choose output folder',str(self.source_folder()))
         if not folder:return
-        folder = str(Path(folder) / 'Segmenting the speech')
+        folder = str(step_folder(folder, 'Segmenting the speech'))
         regions=copy.deepcopy(self.regions);path=str(self.audio)
         def action(log):
             from pause_based_segmentation import export_candidates
@@ -1174,7 +1191,7 @@ class ProcessingWorkspace(QObject):
         self.require_approved()
         folder=QFileDialog.getExistingDirectory(self.window,'Export approved WAV files',str(self.source_folder()))
         if not folder:return
-        folder = str(Path(folder) / 'Segmenting the speech')
+        folder = str(step_folder(folder, 'Segmenting the speech'))
         snapshot=copy.deepcopy(self.session);path=str(self.audio)
         def done(result):
             self.status(f"Exported {result['exported']} approved clips to {result['output_dir']}. Pending spans: {result['pending_unresolved']}.")
@@ -1257,7 +1274,7 @@ class ProcessingWorkspace(QObject):
         if not self.snr_justification:raise ValueError('Enter a threshold justification before saving the SNR report.')
         folder=QFileDialog.getExistingDirectory(self.window,'Save SNR HTML / CSV / JSON',str(self.source_folder()))
         if not folder:return
-        folder = str(Path(folder) / 'Audio quality SNR')
+        folder = str(step_folder(folder, 'Audio quality SNR'))
         self.snr_report=Path(snr.export_report(self.snr_results,self.applied_threshold,folder,policy=self.snr_policy,justification=self.snr_justification)[0])
         self.status('Saved SNR reports: '+str(self.snr_report))
 
@@ -1307,10 +1324,12 @@ class ProcessingWorkspace(QObject):
 
     def save_project(self):
         self.require_audio()
-        path,_=QFileDialog.getSaveFileName(self.window,'Save complete review session',str(self.audio.with_name(self.audio.stem+'_session.json')),'Review session (*.json)')
-        if not path:return
-        payload=self.project_payload()
-        atomic_json(path,payload);self.dirty=False;self.status('Complete review session saved. Keep the source and candidate folders in place.')
+        with save_dialog_folder(self.source_folder() / 'Sessions') as folder:
+            path,_=QFileDialog.getSaveFileName(self.window,'Save complete review session',str(folder / (self.audio.stem+'_session.json')),'Review session (*.json)')
+            if not path:return
+            atomic_json(path,self.project_payload())
+        self.dirty=False
+        self.status('Complete review session saved: ' + path)
 
     def project_payload(self):
         self.require_audio()
@@ -1352,7 +1371,8 @@ class ProcessingWorkspace(QObject):
         self.ui.pannsWindowInput.setText(str(inputs.get('window', '')))
         self.ui.pannsHopInput.setText(str(inputs.get('hop', '')))
         self.asr.restore(data.get('asr'), saved_snr=data.get('snr'))
-        self.dirty=False;self.refresh_all();self.redraw_regions();self.status('Session restored. Click Show spectrogram to rebuild the display.')
+        self.dirty=False;self.refresh_all();self.status('Session restored.')
+        self.restore_region_plot()
 
     def play(self,path,a,b,owner=None):
         if b<=a:raise ValueError('No playable audio in the selected interval.')

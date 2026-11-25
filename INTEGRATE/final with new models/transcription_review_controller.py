@@ -19,6 +19,7 @@ play_table, split, merge, add, delete, recalculate
 save_process_summary, save_review, export
     Save the per-video summary, review table and final corpus.
 """
+from output_folders import metadata_folder, new_run_folder, save_dialog_folder, step_folder
 import copy
 import gc
 import json
@@ -146,13 +147,13 @@ class ASRWorkspace(QObject):
                     snr.preserve_override(analysis,previous.get('snr_analysis'))
                     if analysis.get('override_by'):quality.update(snr.corpus_fields(analysis))
                 fresh[i]=copy.deepcopy(previous);fresh[i].update(quality)
-                fresh[i].update(source_metadata=r['source_metadata'],segmentation_status=r['segmentation_status'])
+                fresh[i].update({key: r[key] for key in ('source_metadata', 'segmentation_status', 'source_mode', 'original_approval')})
                 kept+=1
         engines.migrate_second_engine(fresh,self.ui.cohereModel.text().strip())
         engines.migrate_first_engine(fresh, engines.DEFAULT_QWEN_MODEL)
         for record in fresh:corpus.compare(record)
         self.records=fresh;self.signature=corpus.source_signature(self.p)
-        source=self.p.source_folder()/'metadata.json'
+        source=metadata_folder(self.p.source_folder())/'metadata.json'
         self.source_metadata=json.loads(source.read_text(encoding='utf-8')) if source.is_file() else {}
         self.current_asr=self.current_final=None;self.transcript_draft=self.final_draft=False
         self.p.dirty=True;self.refresh()
@@ -160,7 +161,7 @@ class ASRWorkspace(QObject):
             self.ui.asrTable.selectRow(0)
             self.select_asr()
         n = sum(corpus.is_preview(r) for r in fresh)
-        self.ui.asrInfo.setText(f'Loaded {len(fresh)-n} approved clips and {n} unresolved previews. Retained {kept} unchanged rows. Preview text can be reviewed here before approving boundaries in Part 4.')
+        self.ui.asrInfo.setText(f'Loaded {len(fresh)-n} approved clips and {n} previews awaiting boundary review. Retained {kept} unchanged rows. Preview text can be reviewed here before approving boundaries in Part 4.')
 
     def payload(self):
         return dict(records=copy.deepcopy(self.records),audit_log=copy.deepcopy(self.audit_log),signature=self.signature,
@@ -207,7 +208,7 @@ class ASRWorkspace(QObject):
     def refresh(self):
         final_rows = self.final_records()
         percent=lambda value:'—' if value is None else f'{value:.2%}'
-        self.p.populate(self.ui.asrTable,[[r['segment_id'],f"{r['start']:.3f}",f"{r['end']:.3f}",f"{r['duration']:.3f}",'Unresolved' if corpus.is_preview(r) else 'Resolved',r['label'],r.get('clean_noisy',''),
+        self.p.populate(self.ui.asrTable,[[r['segment_id'],f"{r['start']:.3f}",f"{r['end']:.3f}",f"{r['duration']:.3f}",r.get('segmentation_status', 'unresolved' if corpus.is_preview(r) else 'resolved').title(),r['label'],r.get('clean_noisy',''),
             'Done' if r.get('asr_a_done') else 'Pending','Done' if r.get('asr_b_done') else 'Pending',
             percent(r.get('cer_a_vs_b')),percent(r.get('cer_b_vs_a')),r['status']] for r in self.records])
         self.p.populate(self.ui.finalTable, [
@@ -344,8 +345,7 @@ class ASRWorkspace(QObject):
         total=sum(map(len,jobs.values()));self.ui.asrProgress.setRange(0,total);self.ui.asrProgress.setValue(0)
         snapshot=self.p.project_payload()
         base_state=self.payload();base_state['records']=records
-        asr_folder = self.p.source_folder() / 'Transcription'
-        asr_folder.mkdir(parents=True, exist_ok=True)
+        asr_folder = new_run_folder(self.p.source_folder() / 'Transcription')
         self.autosave_path=asr_folder / (self.p.audio.stem+'_full_autosave.json')
         autosave=self.autosave_path
         def persist():
@@ -506,24 +506,23 @@ class ASRWorkspace(QObject):
     def save_review(self):
         self.commit_drafts()
         self.check_current()
-        folder = self.p.source_folder() / 'Review and export'
-        folder.mkdir(parents=True, exist_ok=True)
-        formats = {'CSV (*.csv)': '.csv', 'Excel (*.xlsx)': '.xlsx', 'HTML (*.html)': '.html', 'JSON (*.json)': '.json'}
-        path, selected = QFileDialog.getSaveFileName(
-            self.w, 'Save review table', str(folder / 'review'), ';;'.join(formats))
-        if not path:
-            return
-        path = Path(path)
-        if not path.suffix:
-            path = path.with_suffix(formats.get(selected, '.csv'))
-        corpus.export_review_csv(path, self.records, self.audit_log)
+        with save_dialog_folder(self.p.source_folder() / 'Review and export') as folder:
+            formats = {'CSV (*.csv)': '.csv', 'Excel (*.xlsx)': '.xlsx', 'HTML (*.html)': '.html', 'JSON (*.json)': '.json'}
+            path, selected = QFileDialog.getSaveFileName(
+                self.w, 'Save review table', str(folder / 'review'), ';;'.join(formats))
+            if not path:
+                return
+            path = Path(path)
+            if not path.suffix:
+                path = path.with_suffix(formats.get(selected, '.csv'))
+            corpus.export_review_csv(path, self.records, self.audit_log)
         self.p.status(f'Review table saved: {path}')
 
     def export(self):
         self.commit_drafts();self.check_current()
         directory=QFileDialog.getExistingDirectory(self.w,'Export final corpus',str(self.p.source_folder()))
         if not directory:return
-        directory = str(Path(directory) / 'Review and export')
+        directory = str(step_folder(directory, 'Review and export'))
         records=copy.deepcopy(self.records);audit=copy.deepcopy(self.audit_log)
         metadata=dict(source=self.source_metadata,audio=str(self.p.audio),
                       source_review=dict(region_changes=self.p.changes,step4=self.p.session,snr=self.p.snr_results),

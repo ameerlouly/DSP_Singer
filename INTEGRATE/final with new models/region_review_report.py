@@ -2,7 +2,7 @@
 
 Function guide
 --------------
-esc, number, render_report
+esc, number, confidence_text, render_report
     Format text, scores and region rows for HTML.
 EmbeddedReviewParser, load_review
     Recover the embedded session from HTML or load review JSON.
@@ -31,6 +31,12 @@ def number(value, digits=3):
     return '—' if value is None else f'{float(value):.{digits}f}'
 
 
+def confidence_text(region):
+    """Format confidence in the original automatic label, including legacy scores."""
+    value = region.get('auto_confidence', None if region.get('manual_override') else region.get('confidence'))
+    return '—' if value is None else f'{float(value):.3f} ({float(value):.1%})'
+
+
 def render_report(payload):
     """Build a self-contained UTF-8 report including machine-readable review data."""
     regions = payload['regions']
@@ -51,7 +57,7 @@ def render_report(payload):
         flagged += bool(region.get('needs_review'))
         corrected += bool(region.get('manual_override'))
         values = [i + 1, number(region['start']), number(region['end']), number(length), label,
-                  region.get('auto_label', ''), number(region.get('auto_confidence')),
+                  region.get('auto_label', ''), confidence_text(region),
                   number(region.get('speech_score')), number(region.get('music_score')),
                   number(region.get('vocal_score')), region.get('vocal_evidence_class') or '—',
                   number(region.get('verified_voice_score')),
@@ -78,7 +84,7 @@ def render_report(payload):
     embedded = base64.b64encode(json.dumps(payload, ensure_ascii=False, allow_nan=False,
                                              separators=(',', ':')).encode('utf-8')).decode('ascii')
     headings = ['#', 'Start (s)', 'End (s)', 'Duration (s)', 'Current label', 'Automatic label',
-                'Auto score', 'Speech score', 'Music score', 'Vocal score', 'Vocal category', 'Separated voice evidence',
+                'Auto confidence', 'Speech score', 'Music score', 'Vocal score', 'Vocal category', 'Separated voice evidence',
                 'RMS (dBFS)', 'Needs review', 'Manual edit', 'Notes']
     header = ''.join(f'<th>{esc(name)}</th>' for name in headings)
     generated = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')

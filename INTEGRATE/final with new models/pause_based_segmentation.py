@@ -23,13 +23,13 @@ The input region list is the same list shown by Step 3. Export never changes
 that list or the source WAV. Regions with no safe-length grouping are recorded
 for manual review rather than being forcibly cut through detected speech.
 """
+from output_folders import new_run_folder
 from datetime import datetime, timezone
 from pathlib import Path
 import copy
 import html
 import json
 import math
-import time
 import numpy as np
 import soundfile as sf
 
@@ -608,8 +608,7 @@ def export_candidates(audio_path, regions, output_parent, progress=lambda text: 
         progress('Loading Silero VAD for PDF pause checks…')
         model=load_silero_vad()
         separator=mixed_pause_separator(regions,progress) if use_vocal_pauses else None
-        output=Path(output_parent)/(path.stem+'_step4_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'_'+str(time.time_ns())[-6:])
-        output.mkdir(parents=True,exist_ok=False)
+        output=new_run_folder(output_parent)
         data=dict(version=3,audio_name=path.name,audio_size=path.stat().st_size,duration_seconds=duration,
             created_utc=datetime.now(timezone.utc).isoformat(),
             method='PDF Step 4: continuous source clips, sustained pause evidence, 0.1–0.2 s natural edge context; human review required',

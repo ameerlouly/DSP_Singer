@@ -9,6 +9,10 @@ Speech Corpus Studio is a Windows desktop application for building a labeled Ara
 3. In **Source & Audio**, select a destination and download a video, or choose a local video. Extract a mono, 16 kHz, 16-bit PCM WAV for the full pipeline. The extraction controls also support producing other formats.
 4. In **Transcription**, start a transcription job to download the recognizers on first use. **Qwen** is system A and **Cohere Arabic INT8** is system B. They run sequentially. Cohere requires a CUDA-capable NVIDIA setup. Model weights are cached locally.
 
+**Auto process** asks for the editor name and runs region labeling, candidate generation, SNR and both recognizers. Pending segment boundaries can be analyzed as previews. At the end, the Transcription page selects the first completed disagreement that needs a decision. Its final text stays empty until you choose a model or enter your correction. Approve segment boundaries before exporting those clips to the final corpus.
+
+Part 3 displays the automatic label confidence on a 0–1 scale and as a percentage in its table and region report. Review & Export shows normalized model and final text in its table and saved reports. The transcription editor and saved session retain the original wording.
+
 ## Workflow and code map
 
 | Stage | Main files | What they do |
@@ -25,6 +29,12 @@ Speech Corpus Studio is a Windows desktop application for building a labeled Ara
 | Environment | `setup_pytorch_cuda.py`, `requirements.txt` | Check the Python environment and configure matching Torch and torchaudio dependencies. |
 
 Each application module starts with its purpose and a guide to its functions. For the details behind individual decisions, see [ASR agreement](ASR_STEP6_RULES.md), [Cohere setup](COHERE_ASR_SETUP.md), [singing detection](SINGING_DETECTION_NOTES.md) and [SNR methods](SNR_METHODS.md). The WADA reference data and its redistribution notice are in `assets/wada/`.
+
+## Saved runs
+
+The video project keeps its chosen name. Each processing step groups output from one run in a local-time folder named `YYYY-MM-DD_HH-MM-SS`. For example, two extractions go into separate directories under `video1/Extract audio/`. Saves in the same second get suffixes such as `_02` and `_03`.
+
+Download metadata stays beside its video. SNR writes its HTML, CSV and JSON together. Each transcription run updates a single autosave in its own folder. Save As suggests dated folders for review tables and complete sessions. The shared Excel summary still appends to the workbook you select. Existing project folders and saved paths can be opened as before.
 
 ## Check a checkout
 

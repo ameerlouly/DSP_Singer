@@ -1188,7 +1188,7 @@ QPushButton#chooseVideoButton:disabled {background:#EDF1F2; color:#87999D; borde
                                                     <widget class="QPushButton" name="autoProcessButton">
                                                       <property name="minimumSize"><size><width>120</width><height>38</height></size></property>
                                                       <property name="text"><string>Auto process</string></property>
-                                                      <property name="toolTip"><string>Label and segment the audio, then resume after reviewing boundaries to calculate SNR and transcribe.</string></property>
+                                                      <property name="toolTip"><string>Label regions, generate candidates, calculate SNR and run both recognizers. Review transcript disagreements on the Transcription page.</string></property>
                                                       <property name="styleSheet"><string>QPushButton#autoProcessButton {background:#2563EB;color:#FFFFFF;border:0;border-radius:6px;padding:8px 14px;font-weight:600;} QPushButton#autoProcessButton:hover {background:#2159D4;} QPushButton#autoProcessButton:disabled {background:#EDF1F2;color:#87999D;}</string></property>
                                                     </widget>
                                                   </item>
@@ -1898,7 +1898,7 @@ QPushButton#saveRegions:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                     </column>
                                     <column>
                                       <property name="text">
-                                        <string>Auto score</string>
+                                        <string>Auto confidence</string>
                                       </property>
                                     </column>
                                     <column>

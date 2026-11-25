@@ -89,7 +89,7 @@ with tempfile.TemporaryDirectory() as d, patch.object(QMessageBox,'warning',side
  assert all(s['status']=='approved' for s in p.session['segments'])
  with patch.object(QFileDialog,'getExistingDirectory',return_value=str(root)):
   p.export_segments();wait()
- manifests=list(root.glob('Segmenting the speech/step4_review_*/step5_manifest.json'));assert len(manifests)==1
+ manifests=list(root.glob('Segmenting the speech/*/step5_manifest.json'));assert len(manifests)==1
  from reviewed_clip_manifest import load_reviewed_clips
  loaded=load_reviewed_clips(manifests[0]);assert len(loaded)==len(p.session['segments'])
  p.calculate_snr();wait();assert len(p.snr_results)==len(loaded)

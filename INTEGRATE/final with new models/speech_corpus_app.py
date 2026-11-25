@@ -18,6 +18,7 @@ rename_folder
 closeEvent, stop_running_operation_and_exit
     Confirm closure during an operation and stop active work before exit.
 """
+from output_folders import metadata_folder, project_folder
 import json
 import os
 import sys
@@ -294,13 +295,11 @@ class MainWindow(QMainWindow):
             self.report_path = self.last_result.with_suffix('.html')
             self.statusLabel.setText('Audio extracted and verified')
             if self.worker.wav_format == CORPUS_FORMAT:
-                # Re-extraction can replace the currently reviewed WAV.
-                self.processing.audio = None
                 self.processing.set_audio(path, ask=False)
             else:
                 self.statusLabel.setText('Custom WAV exported and verified')
                 self.append_log('Custom export saved. To use this video in Regions, extract it with the corpus settings.')
-        self.show_source_details(self.last_result.parent if operation == 'download' else self.last_result.parent.parent)
+        self.show_source_details(metadata_folder(project_folder(self.last_result.parent)))
         self.append_log(f'Completed: {path}')
 
     def operation_failed(self, message):
@@ -382,12 +381,12 @@ class MainWindow(QMainWindow):
                 'Rename the video folder before loading it into Regions. Moving a loaded source breaks candidate paths in saved reviews.')
             return
         current_video = self.videoPathInput.text().strip()
-        folder = Path(current_video).resolve().parent if current_video else None
-        if folder is None or not (folder / 'metadata.html').is_file():
+        folder = project_folder(Path(current_video).resolve().parent) if current_video else None
+        if folder is None or not (metadata_folder(folder) / 'metadata.html').is_file():
             chosen = QFileDialog.getExistingDirectory(self, 'Choose completed video folder', self.outputFolderInput.text())
             if not chosen:
                 return
-            folder = Path(chosen).resolve()
+            folder = project_folder(Path(chosen).resolve())
         name, accepted = QInputDialog.getText(self, 'Rename video folder', 'Folder name', text=folder.name)
         if not accepted:
             return
@@ -396,12 +395,12 @@ class MainWindow(QMainWindow):
         except (OSError, ValueError) as error:
             QMessageBox.warning(self, 'Cannot rename folder', str(error))
             return
-        if current_video and Path(current_video).resolve().parent == folder:
-            self.videoPathInput.setText(str(new_folder / Path(current_video).name))
-        if self.last_result and self.last_result.parent == folder:
-            self.last_result = new_folder / self.last_result.name
-        if self.report_path and self.report_path.parent == folder:
-            self.report_path = new_folder / self.report_path.name
+        if current_video and Path(current_video).resolve().is_relative_to(folder):
+            self.videoPathInput.setText(str(new_folder / Path(current_video).resolve().relative_to(folder)))
+        if self.last_result and self.last_result.is_relative_to(folder):
+            self.last_result = new_folder / self.last_result.relative_to(folder)
+        if self.report_path and self.report_path.is_relative_to(folder):
+            self.report_path = new_folder / self.report_path.relative_to(folder)
         self.append_log(f'Folder renamed: {new_folder}')
 
     def closeEvent(self, event):

@@ -20,6 +20,7 @@ process_summary, append_summary_workbook
 review_rows, review_html, write_review_table, export_review_csv, export_corpus
     Build review rows and write tables, paired audio/text files and corpus metadata.
 """
+from output_folders import new_run_folder
 import copy
 import csv
 import os
@@ -69,6 +70,7 @@ def from_processing(processing):
         a,b = row['source_start'],row['source_end']
         ident,label = row['id'],row['content_label']
         unresolved = row['segmentation_status']=='unresolved'
+        pending = row['segmentation_status'] == 'pending'
         parent = row.get('parent_span_id',ident)
         item = items[parent]
         path=str(Path(processing.audio).resolve())
@@ -80,10 +82,10 @@ def from_processing(processing):
         pad_a=pad_b=0.
         record.update(start=spans[0]['start'],end=spans[-1]['end'],duration=b-a,source_spans=copy.deepcopy(spans),
                       audio_pieces=[dict(path=str(Path(path).resolve()),start=a,end=b,synthetic_start=pad_a,synthetic_end=pad_b)],
-                      asr_a_done=False,asr_b_done=False,source_mode='unresolved_preview' if unresolved else 'continuous_source',
+                      asr_a_done=False,asr_b_done=False,source_mode='unresolved_preview' if unresolved else ('candidate_preview' if pending else 'continuous_source'),
                       segmentation_status=row['segmentation_status'],source_metadata=copy.deepcopy(item),quality_history=copy.deepcopy(quality.get('quality_changes',[])),
                       human_changes=copy.deepcopy([x for x in processing.session.get('changes',[]) if x.get('item_id')==parent]+quality.get('quality_changes',[])),
-                      source_origin=str(processing.audio),original_approval='unresolved' if unresolved else 'approved')
+                      source_origin=str(processing.audio),original_approval=row['segmentation_status'] if unresolved or pending else 'approved')
         record.update(snr.corpus_fields(quality))
         record['audio_signature']=audio_signature(record)
         record['snr_audio_signature']=record['audio_signature'] if quality.get('analysis_version')==2 else None
@@ -93,7 +95,7 @@ def from_processing(processing):
 
 
 def is_preview(record):
-    return record.get('source_mode') == 'unresolved_preview'
+    return record.get('source_mode') in ('unresolved_preview', 'candidate_preview')
 
 
 def can_transcribe(record):
@@ -394,7 +396,7 @@ def process_summary(duration, regions, records, audit_log):
     total = len(eligible)
     return {
         'duration': float(duration), 'region_seconds': duration_by_label,
-        'segments': len(records), 'unresolved': sum(is_preview(r) for r in records),
+        'segments': len(records), 'unresolved': sum(r.get('source_mode') == 'unresolved_preview' for r in records),
         'mean_snr': sum(snr_values) / len(snr_values) if snr_values else None,
         'snr_count': len(snr_values), 'asr_total': total, 'counts': counts,
         'pending': total - sum(counts.values()),
@@ -485,13 +487,25 @@ def review_rows(records, audit_log):
         ident = record['segment_id']
         changes = history.get(ident, record.get('human_changes', []))
         status = record.get('status', 'needs_review')
+        raw_a = record.get('transcript_a') or ''
+        raw_b = record.get('transcript_b') or ''
+        norm_a = record.get('normalized_transcript_a')
+        norm_b = record.get('normalized_transcript_b')
+        if norm_a is None or norm_b is None:
+            norm_a, norm_b, _ = asr.comparison_copies(raw_a, raw_b)
+        final = record.get('final_transcript') or ''
+        normalized_final = asr.normalize_arabic(final)
+        if final and final == raw_b:
+            normalized_final = norm_b
+        elif final and final == raw_a:
+            normalized_final = norm_a
         yield {
             'start': record['start'], 'end': record['end'],
             'label': record.get('label', ''), 'snr': record.get('snr_db'),
             'quality': record.get('clean_noisy', ''),
-            'model_A_transcript': record.get('transcript_a', ''),
-            'model_B_transcript': record.get('transcript_b', ''),
-            'final_transcript': record.get('final_transcript', ''),
+            'model_A_transcript': norm_a,
+            'model_B_transcript': norm_b,
+            'final_transcript': normalized_final,
             'status': status,
             'review_status': status if status in ('accepted', 'difficult', 'not_applicable') else 'pending',
             'automatic_status': record.get('automatic_status', ''),
@@ -517,10 +531,20 @@ def review_html(rows, partial=None, playable=False):
     title = 'Speech corpus review' if partial is None else 'Speech corpus export'
     subtitle = ' · Partial export' if partial else ''
     return f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title}</title><style>body{{font:15px/1.5 'Segoe UI',sans-serif;color:#173b40;margin:20px}}
-section{{overflow:auto}}table{{border-collapse:collapse}}th,td{{padding:8px;border:1px solid #d7e3e6;vertical-align:top}}th{{background:#eaf2f2}}
-td:nth-child(n+6):nth-child(-n+8){{min-width:22em}}details{{min-width:10em;max-width:30em;overflow-wrap:anywhere}}audio{{width:200px}}</style>
-<h1>{title}</h1><p>{len(rows)} clips{subtitle}</p><section><table><thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></section></html>"""
+<title>{title}</title><style>
+body{{box-sizing:border-box;margin:0;padding:clamp(8px,2vw,20px);height:100vh;height:100dvh;display:flex;flex-direction:column;font:15px/1.5 'Segoe UI',sans-serif;color:#173b40}}
+header{{flex:none}}h1{{margin:0}}p{{margin:4px 0 12px}}
+section{{min-height:0;overflow-x:scroll;overflow-y:auto}}
+section:focus-visible{{outline:2px solid #157a6e;outline-offset:2px}}
+section::-webkit-scrollbar{{width:14px;height:14px}}
+section::-webkit-scrollbar-track{{background:#eaf2f2}}
+section::-webkit-scrollbar-thumb{{background:#527579;border:2px solid #eaf2f2;border-radius:7px}}
+table{{border-collapse:separate;border-spacing:0}}th,td{{padding:8px;border-right:1px solid #d7e3e6;border-bottom:1px solid #d7e3e6;vertical-align:top}}
+th{{position:sticky;top:0;background:#eaf2f2}}
+td:nth-child(n+6):nth-child(-n+8){{min-width:22em}}details{{min-width:10em;max-width:30em;overflow-wrap:anywhere}}audio{{width:200px}}
+@media print{{body{{display:block;height:auto;padding:0}}section{{overflow:visible}}th{{position:static}}}}
+</style><header><h1 id="report-title">{title}</h1><p>{len(rows)} clips{subtitle}</p></header>
+<section aria-labelledby="report-title" tabindex="0"><table><thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></section></html>"""
 
 
 def write_review_table(path, rows):
@@ -597,7 +621,7 @@ def export_corpus(records,manifest,audit_log,destination,allow_partial=False):
         raise ValueError('Some source candidates or unresolved spans are still pending. Finish source review or explicitly enable partial export.')
     if pending and not allow_partial:raise ValueError(f'{len(set(pending))} clips need ASR/quality review, current two-method SNR or a threshold justification. Complete them or explicitly enable partial export.')
     for record in records:require_continuous_pdf_audio(record)
-    out=Path(destination)/('corpus_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:6]);out.mkdir(parents=True)
+    out=new_run_folder(destination)
     exported=[]
     for i,record in enumerate(sorted(records,key=lambda r:r['start']),1):
         r=copy.deepcopy(record);audio=read_audio(r)

@@ -13,6 +13,7 @@ preserve_override, set_quality
 corpus_fields, export_report
     Prepare quality fields for the final corpus and save standalone quality reports.
 """
+from output_folders import new_run_folder
 import copy
 import csv
 import html
@@ -118,21 +119,31 @@ def session_records(data,source,*,include_unresolved=True):
             audio_file_size=stat.st_size,audio_file_mtime_ns=stat.st_mtime_ns,
             source_start=source_a,source_end=source_b,content_label=label,synthetic_start=0.,synthetic_end=0.,
             pause_intervals=pauses,pause_basis='Part 4 detector intervals plus named reviewer boundary confirmation'))
+    previews = []
+    if data.get('analyze_pending_candidates'):
+        for item in data['segments']:
+            if item['status'] == 'pending':
+                a, b = review.pdf_audio_mapping(data, item)
+                previews.append((item, a, b, item['id'], 'pending'))
     if include_unresolved:
-        source = Path(source).resolve()
-        stat = source.stat()
-        approved = [(r['source_start'],r['source_end']) for r in out]
-        for item,a,b in review.downstream_unresolved(data,approved):
+        covered = [(r['source_start'], r['source_end']) for r in out]
+        covered.extend((a, b) for _, a, b, _, _ in previews)
+        for item, a, b in review.downstream_unresolved(data, covered):
             ident = item['id']
             original_a, original_b = review.unresolved_bounds(item)
             if (round(a*16000),round(b*16000)) != (round(original_a*16000),round(original_b*16000)):
                 ident = f"{ident}@{round(a*16000)}-{round(b*16000)}"
+            previews.append((item, a, b, ident, 'unresolved'))
+    if previews:
+        source = Path(source).resolve()
+        stat = source.stat()
+        for item, a, b, ident, status in previews:
             pauses = []
             for pause in data.get('pause_intervals', []):
                 left, right = max(a,pause['start']), min(b,pause['end'])
                 if right > left:
                     pauses.append([left-a,right-a])
-            out.append(dict(id=ident,parent_span_id=item['id'],segmentation_status='unresolved',
+            out.append(dict(id=ident,parent_span_id=item['id'],segmentation_status=status,
                 file=source.name,path=str(source),read_start=a,read_end=b,source_start=a,source_end=b,
                 audio_file_size=stat.st_size,audio_file_mtime_ns=stat.st_mtime_ns,
                 content_label=item.get('label') or 'unclassified',synthetic_start=0.,synthetic_end=0.,
@@ -161,7 +172,7 @@ def calculate(records,threshold,progress=None,*,policy='conservative',justificat
             analysis=decision(dict(analysis_version=2,energy_snr_db=None,wada_snr_db=None,
                 energy_details=dict(notes=[str(exc)]),wada_details=dict(notes=[str(exc)]),content_label=item.get('content_label','speech')),threshold,policy,justification)
         item.update(analysis)
-        if item.get('segmentation_status') == 'unresolved' and item.get('noise_source') == 'reviewed_part4_pause_context':
+        if item.get('segmentation_status') in ('unresolved', 'pending') and item.get('noise_source') == 'reviewed_part4_pause_context':
             item['noise_source'] = item['energy_details']['noise_source'] = 'estimated_part4_pause'
         result.append(item)
         if progress:progress(index+1,len(records))
@@ -207,8 +218,7 @@ def export_report(records,threshold,directory,*,policy='conservative',justificat
     if not justification.strip():raise ValueError('Enter the final threshold justification before saving the SNR report.')
     records=reclassify(records,threshold,policy,justification)
     for row in records:row.setdefault('segmentation_status','resolved')
-    dest=Path(directory);dest.mkdir(parents=True,exist_ok=True)
-    base=dest/('step5_snr_'+datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S_%f'))
+    base=new_run_folder(directory) / 'step5_snr'
     complete=all(r.get('analysis_version')==2 for r in records)
     payload=dict(format='speech_corpus_snr_v2',created_utc=datetime.now(timezone.utc).isoformat(),threshold_db=float(threshold),
         threshold_justification=justification.strip(),decision_policy=policy,methods=list(METHODS) if complete else ['legacy_energy_only'],

@@ -25,6 +25,7 @@ report_html, approved_playback_queue, file_sha256, build_step5_manifest, playlis
 save_and_export
     Write the reviewed clip set, playback list, source mappings and integrity hashes.
 """
+from output_folders import new_run_folder
 from pathlib import Path
 from datetime import datetime, timezone
 import copy
@@ -741,10 +742,7 @@ def save_and_export(data, source_wav, destination):
         else:
             raise ValueError('Unknown clip source mode.')
     dest=Path(destination).resolve()
-    dest.mkdir(parents=True,exist_ok=True)
-    # Never overwrite an earlier export, even if the user saves repeatedly.
-    out=dest/('step4_review_'+datetime.now().strftime('%Y%m%d_%H%M%S')+'_'+uuid.uuid4().hex[:6])
-    out.mkdir()
+    out=new_run_folder(dest)
     exports={}
     ordered=sorted((x for x in data['segments'] if x['status']=='approved'), key=lambda x:x['source_start'])
     for i,item in enumerate(ordered,1):
