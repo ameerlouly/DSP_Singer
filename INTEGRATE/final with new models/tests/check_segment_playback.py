@@ -178,7 +178,22 @@ with tempfile.TemporaryDirectory() as directory, \
     assert p.player.state == 'paused' and p.player.position() == 45000
     w.pauseUnresolvedPreview.click()
     # A selected subrange creates a normal pending clip without losing its parent span.
-    w.addManualClip.click()
+    # A local edit must not redraw unrelated pages or replace untouched table items.
+    original_cell = w.segmentTable.item(0, 0)
+    original_region_cell = w.regionTable.item(0, 0)
+    p.snr_snapshot = p.session.copy()
+    with patch.object(p, 'refresh_all', side_effect=AssertionError('Whole workspace refresh')), \
+            patch.object(p, 'refresh_snr', wraps=p.refresh_snr) as snr_draw:
+        w.addManualClip.click()
+        assert p.snr_snapshot is None and p.snr_view_dirty
+        snr_draw.assert_not_called()
+        w.navigationList.setCurrentRow(3)
+        snr_draw.assert_called_once()
+        assert not p.snr_view_dirty
+        w.navigationList.setCurrentRow(2)
+    assert w.segmentTable.item(0, 0) is original_cell and w.regionTable.item(0, 0) is original_region_cell
+    assert (w.unresolvedStart.value(), w.unresolvedEnd.value()) == (48, 60)
+    assert p.selected(w.unresolvedTable) == [1]
     assert (p.session['segments'][-1]['source_start'],p.session['segments'][-1]['source_end']) == (40,48)
     assert len(p.session['unresolved']) == 1
     assert w.unresolvedTable.rowCount() == 2

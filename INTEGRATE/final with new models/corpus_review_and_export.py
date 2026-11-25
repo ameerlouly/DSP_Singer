@@ -62,9 +62,13 @@ def from_processing(processing):
         raise ValueError('Generate or open Part 4 segments first.')
     if any(item['status']=='approved' for item in processing.session['segments']):
         processing.require_approved()
-    inputs=snr.session_records(processing.session,processing.audio)
+    inputs=snr.session_records(processing.session,processing.audio,for_transcription=True)
     items={s['id']:s for s in processing.session['segments']+processing.session.get('unresolved',[])}
-    qualities={s['id']:s for s in processing.snr_results} if processing.snr_snapshot==processing.session else {}
+    qualities={s['id']:s for s in processing.snr_results} if review.same_snr_source(processing.snr_snapshot,processing.session) else {}
+    changes_by_id={}
+    for event in processing.session.get('changes',[]):
+        changes_by_id.setdefault(event.get('item_id'),[]).append(event)
+    source_path=str(Path(processing.audio).resolve())
     records=[]
     for row in inputs:
         a,b = row['source_start'],row['source_end']
@@ -73,7 +77,6 @@ def from_processing(processing):
         pending = row['segmentation_status'] == 'pending'
         parent = row.get('parent_span_id',ident)
         item = items[parent]
-        path=str(Path(processing.audio).resolve())
         spans=[dict(start=a,end=b,clip_start=0.,clip_end=b-a)]
         quality=qualities.get(ident,{})
         raw=dict(id=ident,label=label,source_spans=spans,
@@ -81,10 +84,10 @@ def from_processing(processing):
         record=asr._make_segment(raw,len(records)+1,processing.duration,unresolved=unresolved)
         pad_a=pad_b=0.
         record.update(start=spans[0]['start'],end=spans[-1]['end'],duration=b-a,source_spans=copy.deepcopy(spans),
-                      audio_pieces=[dict(path=str(Path(path).resolve()),start=a,end=b,synthetic_start=pad_a,synthetic_end=pad_b)],
+                      audio_pieces=[dict(path=source_path,start=a,end=b,synthetic_start=pad_a,synthetic_end=pad_b)],
                       asr_a_done=False,asr_b_done=False,source_mode='unresolved_preview' if unresolved else ('candidate_preview' if pending else 'continuous_source'),
                       segmentation_status=row['segmentation_status'],source_metadata=copy.deepcopy(item),quality_history=copy.deepcopy(quality.get('quality_changes',[])),
-                      human_changes=copy.deepcopy([x for x in processing.session.get('changes',[]) if x.get('item_id')==parent]+quality.get('quality_changes',[])),
+                      human_changes=copy.deepcopy(changes_by_id.get(parent,[])+quality.get('quality_changes',[])),
                       source_origin=str(processing.audio),original_approval=row['segmentation_status'] if unresolved or pending else 'approved')
         record.update(snr.corpus_fields(quality))
         record['audio_signature']=audio_signature(record)
@@ -462,7 +465,7 @@ REVIEW_COLUMNS = (
     'start', 'end', 'label', 'snr', 'quality', 'model_A_transcript',
     'model_B_transcript', 'final_transcript', 'status', 'review_status',
     'automatic_status', 'segment_id', 'audio_file', 'changed_by',
-    'changed_at', 'change_log',
+    'changed_at', 'change_log', 'segmentation_status',
 )
 
 
@@ -485,7 +488,18 @@ def review_rows(records, audit_log):
             history.setdefault(ident, []).append(event)
     for record in records:
         ident = record['segment_id']
-        changes = history.get(ident, record.get('human_changes', []))
+        if record.get('segmentation_status')=='unresolved' or record.get('source_mode')=='unresolved_preview':
+            detailed = history.get(ident, [])
+            # Final review stores a compact copy of each detailed audit event on the row.
+            summaries = [{k:v for k,v in e.items() if k not in ('before','after')} for e in detailed]
+            changes = []
+            for event in [*record.get('human_changes', []), *record.get('quality_history', []), *detailed]:
+                if event not in summaries and event not in changes:
+                    changes.append(event)
+            changes.sort(key=lambda e:e.get('time_utc','').split('+')[0])
+        else:
+            changes = history.get(ident, record.get('human_changes', []))
+        latest = changes[-1] if changes else {}
         status = record.get('status', 'needs_review')
         raw_a = record.get('transcript_a') or ''
         raw_b = record.get('transcript_b') or ''
@@ -511,9 +525,10 @@ def review_rows(records, audit_log):
             'automatic_status': record.get('automatic_status', ''),
             'segment_id': ident,
             'audio_file': record.get('file') or record.get('source_origin', ''),
-            'changed_by': record.get('updated_by', ''),
-            'changed_at': record.get('updated_at', ''),
+            'changed_by': latest.get('reviewer') or record.get('updated_by', ''),
+            'changed_at': latest.get('time_utc') or record.get('updated_at', ''),
             'change_log': json.dumps(changes, ensure_ascii=False),
+            'segmentation_status': record.get('segmentation_status') or ('unresolved' if record.get('source_mode')=='unresolved_preview' else 'pending' if record.get('source_mode')=='candidate_preview' else 'resolved'),
         }
 
 
@@ -521,9 +536,10 @@ def review_html(rows, partial=None, playable=False):
     def cell(key, value):
         text = html.escape(str(value)) if value is not None else ''
         if key == 'audio_file' and playable:
-            return f'<td>{text}<br><audio controls preload="none" src="{text}"></audio></td>'
+            return f'<td>{text}<br><audio controls preload="metadata" src="{text}"></audio></td>'
         if key == 'change_log':
-            return f'<td><details><summary>View changes</summary>{text}</details></td>' if value != '[]' else '<td>[]</td>'
+            details = text if value != '[]' else 'No changes recorded.'
+            return f'<td><details><summary>View changes</summary>{details}</details></td>'
         return f'<td dir="auto">{text}</td>'
 
     headers = ''.join(f'<th scope="col">{key}</th>' for key in REVIEW_COLUMNS)
@@ -594,15 +610,71 @@ def write_review_table(path, rows):
     return path
 
 
-def export_review_csv(path, records, audit_log):
-    ordered = sorted(records, key=lambda r: (r['start'], r['end'], r['segment_id']))
-    return write_review_table(path, list(review_rows(ordered, audit_log)))
+def timeline_records(records, session=None, source='', qualities=()):
+    """Include unresolved source time even when a span was skipped for transcription."""
+    combined = list(records)
+    if session and session.get('unresolved'):
+        covered = []
+        previews = {}
+        for r in records:
+            if r.get('source_mode') == 'unresolved_preview' or r.get('segmentation_status') == 'unresolved':
+                parent = (r.get('source_metadata') or {}).get('id') or r['segment_id'].split('@')[0]
+                previews.setdefault(parent, []).append((r['start'],r['end']))
+            else:
+                covered.extend((s['start'],s['end']) for s in r.get('source_spans',[]))
+        for clip in session.get('segments',[]):
+            if clip.get('status')=='approved':
+                covered.extend(review.item_source_ranges(clip))
+        quality_by_id = {q['id']:q for q in qualities}
+        changes_by_parent = {}
+        for event in session.get('changes',[]):
+            ids = {event.get('item_id')}
+            after = event.get('after')
+            if isinstance(after,dict):
+                ids.update(s['id'] for s in after.get('preserved_leftovers',[]))
+            for parent_id in ids:
+                changes_by_parent.setdefault(parent_id,[]).append(event)
+        for item,a,b in review.downstream_unresolved(session,covered):
+            parent = item['id']
+            cursor = a
+            for left,right in sorted(previews.get(parent,[])) + [(b,b)]:
+                end = min(left,b)
+                if cursor < end:
+                    ident = parent if (cursor,end)==review.unresolved_bounds(item) else f'{parent}@{round(cursor*RATE)}-{round(end*RATE)}'
+                    quality = quality_by_id.get(ident,{})
+                    combined.append(dict(segment_id=ident,start=cursor,end=end,label=item.get('label'),
+                        segmentation_status='unresolved',status='not_transcribed',source_origin=str(source),
+                        snr_db=quality.get('snr_db'),clean_noisy=quality.get('quality','')))
+                cursor = max(cursor,right)
+                if cursor>=b:
+                    break
+        preferences = {}
+        for event in session.get('asr_preference_history',[]):
+            preferences.setdefault(event['item_id'],[]).append(event)
+        for index,record in enumerate(combined):
+            if record.get('segmentation_status')=='unresolved' or record.get('source_mode')=='unresolved_preview':
+                ident = record['segment_id']
+                parent = (record.get('source_metadata') or {}).get('id') or ident.split('@')[0]
+                combined[index] = dict(record, human_changes=[*changes_by_parent.get(parent,[]),
+                    *record.get('human_changes',[]), *(e for e in preferences.get(parent,[])
+                    if e['start']<record['end'] and e['end']>record['start'])], quality_history=[
+                    *record.get('quality_history',[]), *quality_by_id.get(ident,{}).get('quality_changes',[])])
+    return sorted(combined,key=lambda r:(r['start'],r['end'],r['segment_id']))
+
+
+def report_rows(records, audit_log, session=None, source='', qualities=()):
+    ordered = timeline_records(records,session,source,qualities)
+    return list(review_rows(ordered,audit_log))
+
+
+def export_review_csv(path, records, audit_log, session=None, source='', qualities=()):
+    return write_review_table(path,report_rows(records,audit_log,session,source,qualities))
 
 
 def export_corpus(records,manifest,audit_log,destination,allow_partial=False):
-    has_unresolved = any(is_preview(r) for r in records)
+    previews = [r for r in records if is_preview(r)]
+    has_unresolved = bool(previews)
     records = [r for r in records if not is_preview(r)]
-    if not records:raise ValueError('Approve a Part 4 clip before corpus export. Unresolved results are available in the session.')
     records=copy.deepcopy(records)
     for record in records:compare(record)
     if overlaps(records):raise ValueError('Final source spans overlap; correct them before corpus export.')
@@ -616,33 +688,60 @@ def export_corpus(records,manifest,audit_log,destination,allow_partial=False):
         if r['clean_noisy'] not in ('clean','noisy'):pending.append(r['segment_id'])
         if r.get('snr_db') is None or (r.get('snr_analysis') or {}).get('analysis_version')!=2 or r.get('snr_audio_signature')!=r['audio_signature'] or r.get('snr_review_required',True) or not r.get('snr_threshold_justification','').strip():
             pending.append(r['segment_id'])
-    source_pending=bool(has_unresolved or manifest.get('pending_source_candidates') or manifest.get('unresolved_source_spans'))
+    source_review = manifest.get('source_review') or {}
+    timeline = timeline_records([*records,*previews],source_review.get('step4'),
+                                manifest.get('audio',''),source_review.get('snr') or [])
+    def status(r):
+        return r.get('segmentation_status') or ('unresolved' if r.get('source_mode')=='unresolved_preview'
+                                                 else 'pending' if is_preview(r) else 'resolved')
+    if not any(status(r) in ('unresolved','resolved') for r in timeline):
+        raise ValueError('No resolved clips or unresolved spans to export.')
+    source_pending=bool(any(status(r)=='unresolved' for r in timeline) or has_unresolved or manifest.get('pending_source_candidates') or manifest.get('unresolved_source_spans'))
     if source_pending and not allow_partial:
         raise ValueError('Some source candidates or unresolved spans are still pending. Finish source review or explicitly enable partial export.')
     if pending and not allow_partial:raise ValueError(f'{len(set(pending))} clips need ASR/quality review, current two-method SNR or a threshold justification. Complete them or explicitly enable partial export.')
     for record in records:require_continuous_pdf_audio(record)
     out=new_run_folder(destination)
     exported=[]
-    for i,record in enumerate(sorted(records,key=lambda r:r['start']),1):
-        r=copy.deepcopy(record);audio=read_audio(r)
-        if not 5*RATE<=len(audio)<=15*RATE:raise ValueError(f"Invalid clip length: {r['segment_id']}")
-        name=f'segment_{i:05d}'
-        sf.write(out/(name+'.wav'),audio,RATE,subtype='PCM_16')
-        (out/(name+'.txt')).write_text(r.get('final_transcript',''),encoding='utf-8')
-        r.update(file=name+'.wav',transcript_file=name+'.txt',sample_count=len(audio),sample_rate_hz=RATE,
-                 sha256=hashlib.sha256((out/(name+'.wav')).read_bytes()).hexdigest())
-        exported.append(r)
+    report_records=[]
+    for record in timeline:
+        r=copy.deepcopy(record)
+        state=status(r)
+        if state=='pending':
+            relative=Path('review_audio') / f'pending_{len(report_records)+1:05d}.wav'
+            (out/relative.parent).mkdir(exist_ok=True)
+            review.extract_wav(r['source_origin'],out/relative,r['start'],r['end'])
+            r['file']=relative.as_posix()
+        else:
+            name=f'segment_{len(exported)+1:05d}' + ('_unresolved' if state=='unresolved' else '')
+            wav=out/(name+'.wav')
+            if state=='unresolved':
+                if r.get('audio_signature') and audio_signature(r)!=r['audio_signature']:
+                    raise ValueError('Unresolved source audio changed. Reload the clips before export.')
+                review.extract_wav(r['source_origin'],wav,r['start'],r['end'])
+                count=round(r['end']*RATE)-round(r['start']*RATE)
+            else:
+                audio=read_audio(r)
+                count=len(audio)
+                if not 5*RATE<=count<=15*RATE:raise ValueError(f"Invalid clip length: {r['segment_id']}")
+                sf.write(wav,audio,RATE,subtype='PCM_16')
+            (out/(name+'.txt')).write_text(r.get('final_transcript') or '',encoding='utf-8')
+            r.update(file=wav.name,transcript_file=name+'.txt',sample_count=count,sample_rate_hz=RATE,
+                     sha256=review.file_sha256(wav),segmentation_status=state)
+            exported.append(r)
+        report_records.append(r)
     metadata=dict(manifest,exported_utc=stamp(),partial=bool(pending) or source_pending,pending_segment_ids=sorted(set(pending)),
                   asr_comparison_policy=asr.comparison_policy(),
                   snr_methods=list(snr.METHODS),second_snr_method='wada_snr',
-                  snr_analysis_complete=all((r.get('snr_analysis') or {}).get('analysis_version')==2 and r.get('snr_audio_signature')==r['audio_signature'] for r in records))
+                  snr_analysis_complete=all((r.get('snr_analysis') or {}).get('analysis_version')==2 and r.get('snr_audio_signature')==r['audio_signature'] for r in exported))
     if manifest.get('source_review') is not None:
         (out/'source_review.json').write_text(json.dumps(manifest['source_review'],ensure_ascii=False,indent=2),encoding='utf-8')
         metadata['source_review_file']='source_review.json'
     rows = list(review_rows(exported, audit_log))
-    for filename in ('corpus.csv', 'review.csv'):
-        write_review_table(out / filename, rows)
+    write_review_table(out / 'corpus.csv', rows)
+    report=list(review_rows(report_records,audit_log))
+    write_review_table(out / 'review.csv', report)
     (out/'corpus.json').write_text(json.dumps(dict(metadata=metadata, segments=rows), ensure_ascii=False, indent=2), encoding='utf-8')
     (out/'corpus_audit.json').write_text(json.dumps(dict(segments=exported, audit_log=audit_log), ensure_ascii=False, indent=2), encoding='utf-8')
-    (out/'corpus_report.html').write_text(review_html(rows, partial=metadata['partial'], playable=True), encoding='utf-8')
+    (out/'corpus_report.html').write_text(review_html(report, partial=metadata['partial'], playable=True), encoding='utf-8')
     return dict(output_dir=str(out),clips=len(exported),partial=bool(pending) or source_pending)

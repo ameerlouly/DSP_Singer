@@ -96,15 +96,15 @@ with tempfile.TemporaryDirectory() as d, patch.object(QMessageBox,'warning',side
  p.ui.snrTable.selectRow(0);p.ui.overrideReason.setText('Listening test override');p.override_quality('noisy')
  assert p.snr_results[0]['quality']=='noisy' and p.snr_results[0]['quality_changes']
  p.ui.snrJustification.setText('20 dB retained as the project baseline for this controlled listening workflow.')
- with patch.object(QFileDialog,'getExistingDirectory',return_value=str(root)):p.save_snr()
+ with patch.object(QFileDialog,'getExistingDirectory',return_value=str(root)):p.save_snr();wait()
  assert p.snr_report.is_file()
  result=json.loads(p.snr_report.with_suffix('.json').read_text())
  assert result['second_method']=='wada_snr' and result['methods']==['pause_energy','wada_snr']
  project=root/'session.json'
- with patch.object(QFileDialog,'getSaveFileName',return_value=(str(project),'')):p.save_project()
+ with patch.object(QFileDialog,'getSaveFileName',return_value=(str(project),'')):p.save_project();wait()
  expected=copy.deepcopy(p.session);expected_snr=copy.deepcopy(p.snr_results)
  p.session=None;p.snr_results=[]
- with patch.object(QFileDialog,'getOpenFileName',return_value=(str(project),'')):p.open_project()
+ with patch.object(QFileDialog,'getOpenFileName',return_value=(str(project),'')):p.open_project();wait()
  assert p.session==expected and p.snr_results==expected_snr and not p.dirty
  # A changed clip invalidates all old SNR results.
  p.ui.segmentTable.selectRow(0);p.ui.segmentLabel.setCurrentText('mixed');p.edit_segment()

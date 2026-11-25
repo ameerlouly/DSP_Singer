@@ -101,7 +101,7 @@ def source_time_key(record):
     return float(record['source_start']), float(record['source_end']), record['id']
 
 
-def session_records(data,source,*,include_unresolved=True):
+def session_records(data,source,*,include_unresolved=True,for_transcription=False):
     queue=review.approved_playback_queue(data,source);items={x['id']:x for x in data['segments']};out=[]
     for path,a,b,label,ident in queue:
         item=items[ident];source_a,source_b=review.require_pdf_review(data,item)
@@ -129,11 +129,15 @@ def session_records(data,source,*,include_unresolved=True):
         covered = [(r['source_start'], r['source_end']) for r in out]
         covered.extend((a, b) for _, a, b, _, _ in previews)
         for item, a, b in review.downstream_unresolved(data, covered):
-            ident = item['id']
-            original_a, original_b = review.unresolved_bounds(item)
-            if (round(a*16000),round(b*16000)) != (round(original_a*16000),round(original_b*16000)):
-                ident = f"{ident}@{round(a*16000)}-{round(b*16000)}"
-            previews.append((item, a, b, ident, 'unresolved'))
+            ranges = review.transcription_ranges(data,item,a,b) if for_transcription else [(a,b)]
+            for start,end in ranges:
+                if review.under_one_second(start,end):
+                    continue
+                ident = item['id']
+                original_a, original_b = review.unresolved_bounds(item)
+                if (round(start*16000),round(end*16000)) != (round(original_a*16000),round(original_b*16000)):
+                    ident = f"{ident}@{round(start*16000)}-{round(end*16000)}"
+                previews.append((item, start, end, ident, 'unresolved'))
     if previews:
         source = Path(source).resolve()
         stat = source.stat()

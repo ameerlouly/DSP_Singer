@@ -24,6 +24,13 @@ import segment_review as review
 RATE=16000
 
 class PDFPart4(unittest.TestCase):
+    def test_consecutive_short_unresolved(self):
+        pieces = [dict(start=i*2,end=i*2+1.8) for i in range(10)]
+        result = cuts.group_short_unresolved(pieces, [])
+        self.assertEqual(sum(len(r['parts']) for r in result), 10)
+        self.assertTrue(all(5 <= r['end']-r['start'] <= 15 for r in result))
+        self.assertEqual(cuts.group_short_unresolved(pieces[:3],[dict(start=1.81,end=1.99)]),pieces[:3])
+
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
         self.path=self.root/'source.wav'
@@ -35,13 +42,13 @@ class PDFPart4(unittest.TestCase):
             i,j=round(a*RATE),round(b*RATE)
             samples[i:j]+=.15*np.sin(2*np.pi*220*t[i:j])
         sf.write(self.path,samples,RATE,subtype='PCM_16')
-    def export(self,module,phrases,label='speech',separator=None):
+    def export(self,module,phrases,label='speech',separator=None,regions=None):
         fake_torch=types.ModuleType('torch');fake_torch.set_num_threads=lambda n:None
         fake_vad=types.ModuleType('silero_vad');fake_vad.load_silero_vad=lambda:object()
         with patch.dict(sys.modules,torch=fake_torch,silero_vad=fake_vad), \
-             patch.object(cuts,'detect_speech',return_value=phrases), \
+             patch.object(cuts,'detect_speech',side_effect=phrases if callable(phrases) else lambda *a,**kw:phrases), \
              patch.object(cuts,'mixed_pause_separator',return_value=separator):
-            result=module.export_candidates(self.path,[dict(start=0.,end=40.,label=label)],self.root)
+            result=module.export_candidates(self.path,regions or [dict(start=0.,end=40.,label=label)],self.root)
         folder=Path(result['output_dir'])
         return json.loads((folder/'step4_segments.json').read_text()),folder
     def assert_contract(self,data,folder):
@@ -104,6 +111,86 @@ class PDFPart4(unittest.TestCase):
         self.assert_contract(data,folder);self.assertEqual(len(data['segments']),4)
         self.assertFalse(data['unresolved'])
         self.assertTrue(all(s['kind']=='vocal_pause_candidate' for s in data['segments']))
+    def test_adjacent_silence_is_checked_and_shared_without_overlap(self):
+        phrases = [[1., 9.], [9.22, 17.22]]
+        regions = [dict(start=a,end=b,label=label) for a,b,label in [
+            (0.,1.,'silence'),(1.,9.,'speech'),(9.,9.22,'silence'),
+            (9.22,17.22,'speech'),(17.22,40.,'silence')]]
+        self.wave(phrases)
+        data, folder = self.export(cuts,phrases,regions=regions)
+        self.assertEqual([(c['start'],c['end']) for c in data['segments']],
+                         [(.85,9.11),(9.11,17.37)])
+        self.assertFalse(data['unresolved'])
+        self.assertAlmostEqual(data['coverage_seconds']['adjacent_silence_in_clips'],.52)
+        for c in data['segments']:
+            wave,_ = sf.read(self.path,dtype='int16')
+            actual,_ = sf.read(folder/c['file'],dtype='int16')
+            np.testing.assert_array_equal(actual,wave[round(c['start']*RATE):round(c['end']*RATE)])
+        # Music and a mislabeled audible word at a block edge cannot supply padding.
+        regions[0]['label'] = 'music'
+        self.wave(phrases + [[17.22,17.37]])
+        data,_ = self.export(cuts,phrases,regions=regions)
+        self.assertEqual(len(data['unresolved']),2)
+        self.assertFalse(data['segments'])
+
+    def test_only_long_span_gets_second_pass_and_requires_quiet_source(self):
+        first = [[.5,8.5],[9.,30.],[30.5,39.5]]
+        refined = [[9.,19.],[19.22,30.]]
+        calls = []
+        def detect(audio,start,end,model,progress,pause_ms=240):
+            calls.append((start,end,pause_ms))
+            return first if pause_ms==240 else refined
+        self.wave([first[0],*refined,first[-1]])
+        data,folder = self.export(cuts,detect)
+        self.assert_contract(data,folder)
+        self.assertEqual(calls,[(0.,40.,240),(9.,30.,200)])
+        self.assertEqual(len(data['segments']),4)
+        self.assertFalse(data['unresolved'])
+        # A quiet consonant that interrupts the 220 ms pause prevents the cut.
+        self.wave([first[0],*refined,first[-1],[19.1,19.12]])
+        data,folder = self.export(cuts,detect)
+        self.assert_contract(data,folder)
+        self.assertEqual(len(data['segments']),2)
+        self.assertEqual([(u['start'],u['end']) for u in data['unresolved']],[(9.,30.)])
+
+    def test_33_second_lecture_with_steady_room_noise(self):
+        phrases = [[.5,11.],[11.5,22.],[22.5,33.5]]
+        times = np.arange(40*RATE)/RATE
+        samples = np.random.default_rng(123).normal(0,.035,len(times))
+        for a,b in phrases:
+            mask = (times >= a) & (times < b)
+            samples[mask] += .15*np.sin(2*np.pi*220*times[mask])
+        samples[times < .5] = samples[times >= 33.5] = 0
+        sf.write(self.path,samples,RATE,subtype='PCM_16')
+        regions = [dict(start=0.,end=40.,label='speech')]
+        data,folder = self.export(cuts,phrases,regions=regions)
+        self.assert_contract(data,folder)
+        self.assertEqual(len(data['segments']),3)
+        self.assertFalse(data['unresolved'])
+        # Even if VAD misses a quiet voiced sound, reject the contaminated gap.
+        mask = (times >= 11.15) & (times < 11.35)
+        samples[mask] += .08*np.sin(2*np.pi*260*times[mask])
+        sf.write(self.path,samples,RATE,subtype='PCM_16')
+        data,folder = self.export(cuts,phrases,regions=regions)
+        self.assertFalse(any(11 <= c['end'] <= 11.5 for c in data['segments']))
+        self.assertTrue(data['unresolved'])
+
+    def test_short_vocal_pause_requires_separated_vocals(self):
+        times=np.arange(40*RATE)/RATE
+        wave=np.full(len(times),.2,dtype=np.float32)
+        for a,b in [(0.,.5),(9.9,10.12),(19.9,20.12),(29.9,30.12),(39.5,40.)]:
+            wave[(times>=a)&(times<b)]=.1
+        sf.write(self.path,wave,RATE,subtype='PCM_16')
+        # Residual stem energy stays above the absolute quiet threshold.
+        stem=lambda x,rate:np.where(x>.15,.2,.015).astype(np.float32)
+        data,folder=self.export(cuts,[[0.,40.]],label='mixed',separator=stem)
+        self.assert_contract(data,folder)
+        self.assertEqual(len(data['segments']),4)
+        self.assertFalse(data['unresolved'])
+        data,_=self.export(cuts,[[0.,40.]],label='mixed')
+        self.assertFalse(data['segments'])
+        self.assertEqual(len(data['unresolved']),1)
+
     def make_session(self):
         self.wave([[.5,9.5],[10.,19.],[19.5,29.],[29.5,39.5]])
         data,folder=self.export(cuts,[[.5,9.5],[10.,19.],[19.5,29.],[29.5,39.5]])

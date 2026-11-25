@@ -49,7 +49,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  assert p.applied_threshold==30.
  # Explicit recomputation also keeps a named correction for identical samples.
  w.calculateSNR.click();wait();assert p.snr_results[0]['quality']=='clean' and p.snr_results[0]['override_by']=='Quality reviewer'
- with patch.object(QFileDialog,'getExistingDirectory',return_value=str(root)):w.saveSNR.click()
+ with patch.object(QFileDialog,'getExistingDirectory',return_value=str(root)):w.saveSNR.click();wait()
  assert p.snr_report.is_file()
  report=json.loads(p.snr_report.with_suffix('.json').read_text())
  assert report['format']=='speech_corpus_snr_v2' and report['second_method']=='wada_snr'
@@ -57,11 +57,11 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  with p.snr_report.with_suffix('.csv').open(encoding='utf-8-sig') as f:row=next(csv.DictReader(f))
  assert row['energy_snr_db'] and row['wada_snr_db'] and row['quality']=='clean'
  saved=copy.deepcopy(p.snr_results);project=root/'session.json'
- with patch.object(QFileDialog,'getSaveFileName',return_value=(str(project),'')):p.save_project()
+ with patch.object(QFileDialog,'getSaveFileName',return_value=(str(project),'')):p.save_project();wait()
  p.snr_results=[]
- with patch.object(QFileDialog,'getOpenFileName',return_value=(str(project),'')):p.open_project()
+ with patch.object(QFileDialog,'getOpenFileName',return_value=(str(project),'')):p.open_project();wait()
  assert p.snr_results==saved and p.snr_policy=='wada' and p.snr_justification==rationale
- p.asr.sync_current();record=p.asr.records[0]
+ p.asr.sync_current();wait();record=p.asr.records[0]
  assert record['energy_snr_db']==saved[0]['energy_snr_db'] and record['wada_snr_db']==saved[0]['wada_snr_db']
  assert not record['snr_review_required'] and record['snr_audio_signature']==record['audio_signature']
  out=corpus.export_corpus(p.asr.records,{},[],root,True)

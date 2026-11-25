@@ -52,7 +52,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  p.ui.snrJustification.setText('20 dB is the baseline for this controlled workflow; quality confirmed by the test reviewer.');p.snr_controls_changed()
  p.snr_results=snr.calculate(snr.session_records(p.session,source),20,justification=p.snr_justification);p.snr_snapshot=copy.deepcopy(p.session)
  for r in p.snr_results:snr.set_quality(r,'noisy' if r['content_label']=='mixed' else 'clean','Integration reviewer','Controlled-source quality review')
- a.sync_current()
+ a.sync_current();wait()
  w.navigationList.setCurrentRow(4)
  assert len(a.records)==3 and np.array_equal(corpus.read_audio(a.records[0]),sf.read(root/'first.wav',dtype='float32')[0])
  assert a.ui.asrFinalText.layoutDirection()==Qt.LayoutDirection.RightToLeft
@@ -62,7 +62,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  def cohere(model,audio,rate):
   assert rate==16000;calls.append(('b',len(audio)))
   return ('اهلا بكم',.85) if sum(k=='b' for k,n in calls)==1 else ('السلام عليك',.75)
- model_a=object();model_b=object();phases=[]
+ model_a=object();model_b=dict(engine=engine.COHERE_CPU_ENGINE,model_name=engine.CPU_COHERE_MODEL);phases=[]
  def release(model):phases.append('release_a' if model is model_a else 'release_b')
  def load_b(*args):
   assert phases==['release_a'],'Cohere loaded before Qwen was released'
@@ -70,8 +70,8 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  with patch.object(engine,'load_qwen_model',return_value=model_a),patch.object(engine,'load_cohere_model',side_effect=load_b),patch.object(engine,'release_asr_model',side_effect=release),patch.object(engine,'transcribe_qwen',side_effect=qwen),patch.object(engine,'transcribe_cohere',side_effect=cohere):
   a.transcribe(False);wait()
  assert phases==['release_a','release_b']
- assert a.records[0]['asr_b_engine']==engine.COHERE_ENGINE
- assert a.records[0]['models']['b']==engine.DEFAULT_COHERE_MODEL
+ assert a.records[0]['asr_b_engine']==engine.COHERE_CPU_ENGINE
+ assert a.records[0]['models']['b']==engine.CPU_COHERE_MODEL
  assert 'Cohere' in w.transcriptionPageTitle.text() and not hasattr(w,'mmsModel')
  assert len(calls)==4  # Music was excluded; both speech/mixed clips used both models.
  assert [r['clean_noisy'] for r in a.records[:2]]==['clean','noisy']
@@ -111,11 +111,25 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
   assert not w.pages.isEnabled()
   w.asrStop.click();release.set();wait();load_b.assert_not_called()
  assert a.records[0]['asr_a_done'] and not a.records[0]['asr_b_done']
- with patch.object(engine,'load_qwen_model') as load_a,patch.object(engine,'load_cohere_model',return_value=object()),patch.object(engine,'transcribe_cohere',return_value=('اهلا بكم',.8)):
+ with patch.object(engine,'load_qwen_model') as load_a,patch.object(engine,'load_cohere_model',return_value=model_b.copy()),patch.object(engine,'transcribe_cohere',return_value=('اهلا بكم',.8)):
   a.transcribe(False);wait();load_a.assert_not_called()
  assert a.records[0]['asr_b_done']
  session=root/'complete.json'
- with patch.object(QFileDialog,'getSaveFileName',return_value=(str(session),'')):p.save_project()
+ # Delay the disk write and require the Qt event loop to run while it is pending.
+ import threading
+ from PyQt6.QtCore import QTimer
+ import audio_review_controller as controller
+ original_write=controller.atomic_json
+ allow_write=threading.Event()
+ def delayed_write(path,payload):
+  assert threading.current_thread() is not threading.main_thread()
+  assert allow_write.wait(4),'UI could not dispatch timer while the save was active'
+  original_write(path,payload)
+ with patch.object(controller,'atomic_json',side_effect=delayed_write), patch.object(QFileDialog,'getSaveFileName',return_value=(str(session),'')):
+  p.save_project()
+  assert p.task is not None
+  QTimer.singleShot(20,allow_write.set)
+  wait()
  expected=copy.deepcopy(a.records)
  # Legacy cached comparison scores/text are refreshed from original outputs;
  # a named human transcript choice remains intact without model inference.
@@ -125,7 +139,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  stale['asr']['records'][0].update(status='difficult',transcript_status='difficult',final_transcript='stale')
  session.write_text(json.dumps(stale,ensure_ascii=False))
  a.clear()
- with patch.object(QFileDialog,'getOpenFileName',return_value=(str(session),'')):p.open_project()
+ with patch.object(QFileDialog,'getOpenFileName',return_value=(str(session),'')):p.open_project();wait()
  assert a.records==expected and a.signature==corpus.source_signature(p)
  # Open an earlier MMS session: retain A/human edits, archive old B, and run
  # only Cohere. A legacy text must never be relabeled as Cohere output.
@@ -134,13 +148,13 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  for r in old['asr']['records'][:2]:
   r['models']['b']='facebook/mms-1b-all';r.pop('asr_b_engine',None)
  legacy=root/'legacy.json';legacy.write_text(json.dumps(old,ensure_ascii=False))
- with patch.object(QFileDialog,'getOpenFileName',return_value=(str(legacy),'')):p.open_project()
+ with patch.object(QFileDialog,'getOpenFileName',return_value=(str(legacy),'')):p.open_project();wait()
  assert all(r['asr_a_done'] and not r['asr_b_done'] for r in a.records[:2])
  assert all(r['legacy_asr_results'][-1]['model']=='facebook/mms-1b-all' for r in a.records[:2])
  assert a.records[1]['final_transcript']=='السلام عليك' and a.records[1]['human_override']
- with patch.object(engine,'load_qwen_model') as load_a,patch.object(engine,'load_cohere_model',return_value=object()),patch.object(engine,'transcribe_cohere',side_effect=[('اهلا بكم',None),('السلام عليك',None)]):
+ with patch.object(engine,'load_qwen_model') as load_a,patch.object(engine,'load_cohere_model',return_value=model_b.copy()),patch.object(engine,'transcribe_cohere',side_effect=[('اهلا بكم',None),('السلام عليك',None)]):
   a.transcribe(False);wait();load_a.assert_not_called()
- assert all(r['asr_b_done'] and r['asr_b_engine']==engine.COHERE_ENGINE for r in a.records[:2])
+ assert all(r['asr_b_done'] and r['asr_b_engine']==engine.COHERE_CPU_ENGINE for r in a.records[:2])
  # Full output includes exact approved continuous source audio plus UTF-8 text/CSV.
  with patch.object(QFileDialog,'getExistingDirectory',return_value=str(root)):a.export();wait()
  out=opened[-1];rows=list(csv.DictReader((out/'corpus.csv').open(encoding='utf-8-sig')))
@@ -150,7 +164,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  assert rows[0]['model_A_transcript'] and rows[0]['model_B_transcript']
  assert list(json.loads((out/'corpus.json').read_text())['segments'][0])==list(corpus.REVIEW_COLUMNS)
  audit=json.loads((out/'corpus_audit.json').read_text())['segments'][0]
- assert audit['cer_a_vs_b']==0. and audit['models']['b']==engine.DEFAULT_COHERE_MODEL
+ assert audit['cer_a_vs_b']==0. and audit['models']['b']==engine.CPU_COHERE_MODEL
  assert audit['legacy_asr_results'][0]['model']=='facebook/mms-1b-all'
  assert np.array_equal(sf.read(out/'segment_00001.wav',dtype='float32')[0],sf.read(root/'first.wav',dtype='float32')[0])
  assert (out/'corpus_report.html').is_file() and (out/'source_review.json').is_file()

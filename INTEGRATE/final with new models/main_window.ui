@@ -2668,6 +2668,21 @@ QPushButton#resolveOverlaps:disabled {background:#E3E9EB; color:#61777C; border:
                                               </property>
                                             </widget>
                                           </item>
+                                          <item row="1" column="2">
+                                            <widget class="QPushButton" name="approveAllSegments">
+                                              <property name="styleSheet">
+                                                <string>QPushButton#approveAllSegments {background:#0F766E; color:#FFFFFF; border:1px solid #0F766E; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#approveAllSegments:hover {background:#0E6A63; border-color:#0E6A63;}
+QPushButton#approveAllSegments:pressed {background:#0C5E58; border-color:#0C5E58;}
+QPushButton#approveAllSegments:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#approveAllSegments:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                              </property>
+                                              <property name="text">
+                                                <string>Approve all segments</string>
+                                              </property>
+                                            <property name="toolTip"><string>Approve every pending candidate after listening to its boundaries. Records your reviewer name on each approval.</string></property>
+                                      </widget>
+                                          </item>
                                         </layout>
                                       </item>
                                       <item>
@@ -2827,7 +2842,7 @@ QPushButton#resolveOverlaps:disabled {background:#E3E9EB; color:#61777C; border:
                                 <item>
                                   <widget class="QLabel" name="unresolvedHeading">
                                     <property name="text">
-                                      <string>Unresolved spans and uncovered gaps · select and listen to preserve missed speech</string>
+                                      <string>Unresolved spans and uncovered gaps · Shift-select neighboring rows to listen and add one continuous clip</string>
                                     </property>
                                     <property name="wordWrap">
                                       <bool>true</bool>
@@ -2859,6 +2874,11 @@ QPushButton#resolveOverlaps:disabled {background:#E3E9EB; color:#61777C; border:
                                     <column>
                                       <property name="text">
                                         <string>Status</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>Transcription</string>
                                       </property>
                                     </column>
                                     <column>
@@ -2998,6 +3018,21 @@ QPushButton#goQuality:disabled {background:#E3E9EB; color:#61777C; border:1px so
                                         <property name="text">
                                           <string>Continue to SNR →</string>
                                         </property>
+                                      </widget>
+                                    </item>
+                                    <item row="1" column="3">
+                                      <widget class="QPushButton" name="toggleSpanAsr">
+                                        <property name="styleSheet">
+                                          <string>QPushButton#toggleSpanAsr {background:#475569; color:#FFFFFF; border:1px solid #475569; border-radius:6px; padding:8px 14px; font-weight:600;}
+QPushButton#toggleSpanAsr:hover {background:#404C5E; border-color:#404C5E;}
+QPushButton#toggleSpanAsr:pressed {background:#394454; border-color:#394454;}
+QPushButton#toggleSpanAsr:focus {border:2px solid #173B40; padding:7px 13px;}
+QPushButton#toggleSpanAsr:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
+                                        </property>
+                                        <property name="text">
+                                          <string>Skip transcription</string>
+                                        </property>
+                                      <property name="toolTip"><string>Toggle transcription for the selected unresolved row. It remains available for segment review and SNR.</string></property>
                                       </widget>
                                     </item>
                                   </layout>
@@ -3536,7 +3571,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                       <item row="0" column="2">
                                         <widget class="QLabel" name="cohereNameLabel">
                                           <property name="text">
-                                            <string>Cohere Arabic INT8 model</string>
+                                            <string>Cohere Arabic model</string>
                                           </property>
                                           <property name="wordWrap">
                                             <bool>true</bool>
@@ -3605,7 +3640,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                 <item>
                                   <widget class="QLabel" name="asrInfo">
                                     <property name="text">
-                                      <string>Load the Part 4 results to include approved clips and unresolved spans. First use downloads model weights. System B is general Arabic Cohere INT8 on the NVIDIA GPU.</string>
+                                      <string>Load the Part 4 results to include approved clips and unresolved spans. First use downloads model weights. System B is Cohere Arabic. The default uses NVIDIA INT8 when available and CPU otherwise.</string>
                                     </property>
                                     <property name="wordWrap">
                                       <bool>true</bool>
@@ -3795,7 +3830,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                       <item>
                                         <widget class="QLabel" name="asrBLabel">
                                           <property name="text">
-                                            <string>B · Cohere Arabic INT8</string>
+                                            <string>B · Cohere Arabic</string>
                                           </property>
                                           <property name="wordWrap">
                                             <bool>true</bool>
@@ -4081,6 +4116,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                     <column><property name="text"><string>changed_by</string></property></column>
                                     <column><property name="text"><string>changed_at</string></property></column>
                                     <column><property name="text"><string>change_log</string></property></column>
+                                    <column><property name="text"><string>segmentation_status</string></property></column>
                                   </widget>
                                 </item>
                                 <item>

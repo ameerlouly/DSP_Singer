@@ -41,12 +41,19 @@ with tempfile.TemporaryDirectory() as directory, \
             app.processEvents();time.sleep(.01)
         assert p.task is None
         assert classify.call_args.kwargs['verify_vocals'] is False
+    def wait():
+        deadline=time.monotonic()+20
+        while p.task is not None and time.monotonic()<deadline:
+            app.processEvents()
+            time.sleep(.01)
+        assert p.task is None
+
     project=root/'session.json'
     with patch.object(QFileDialog,'getSaveFileName',return_value=(str(project),'')):
-        p.save_project()
+        p.save_project();wait()
     w.improveSinging.setChecked(True)
     with patch.object(QFileDialog,'getOpenFileName',return_value=(str(project),'')):
-        p.open_project()
+        p.open_project();wait()
     assert not w.improveSinging.isChecked()
     p.dirty=False;w.close();app.processEvents()
 print('PASS: singing verification enabled by default, checkbox captured on the Qt main thread, both modes passed to worker and setting restored from session.')

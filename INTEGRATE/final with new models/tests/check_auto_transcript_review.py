@@ -49,8 +49,9 @@ def check():
         mocks.enter_context(patch('audio_review_controller.classify_file', return_value=[
             dict(start=0, end=16, label='speech', auto_label='speech', auto_confidence=.812, needs_review=True)]))
         mocks.enter_context(patch('pause_based_segmentation.export_candidates', return_value={'output_dir': root}))
-        for key in ['load_qwen_model', 'load_cohere_model']:
-            mocks.enter_context(patch.object(engines, key, return_value={}))
+        mocks.enter_context(patch.object(engines, 'load_qwen_model', return_value={}))
+        mocks.enter_context(patch.object(engines, 'load_cohere_model', return_value=dict(
+            engine=engines.COHERE_CPU_ENGINE, model_name=engines.CPU_COHERE_MODEL)))
         mocks.enter_context(patch.object(engines, 'transcribe_qwen', side_effect=[('مَدْرَسَة', None), ('أهلاً بكم', None)]))
         mocks.enter_context(patch.object(engines, 'transcribe_cohere', side_effect=[('مدرسة', None), ('أهلاً بالجميع', None)]))
         window.autoProcessButton.click()
@@ -76,6 +77,10 @@ def check():
         assert list(corpus.review_rows(workspace.records, []))[1]['final_transcript'] == 'اهلا بكم'
         segment_review.approve_segment(p.session, 1, 'Test editor')
         workspace.sync_current()
+        deadline=time.monotonic()+20
+        while p.task is not None and time.monotonic()<deadline:
+            app.processEvents();time.sleep(.01)
+        assert p.task is None
         chosen = workspace.records[1]
         assert chosen['human_override'] and chosen['segmentation_status'] == 'resolved' and not corpus.is_preview(chosen)
         assert chosen['final_transcript'] == 'أهلاً بكم'

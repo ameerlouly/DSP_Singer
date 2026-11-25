@@ -150,16 +150,23 @@ def check_qt_workflow():
         assert len(warnings) == 1 and p.regions == before and p.changes == history
         warnings.clear()
 
+        def wait():
+            deadline=time.monotonic()+20
+            while p.task is not None and time.monotonic()<deadline:
+                app.processEvents()
+                time.sleep(.01)
+            assert p.task is None
+
         with patch.object(QFileDialog, 'getExistingDirectory', return_value=str(root)):
-            p.save_regions()
+            p.save_regions();wait()
         report, = (root / 'Labeled audio regions').glob('*/source_regions.html')
         assert load_review(report)['regions'] == p.regions
         project = root / 'session.json'
         with patch.object(QFileDialog, 'getSaveFileName', return_value=(str(project), '')):
-            p.save_project()
+            p.save_project();wait()
         p.regions = []
         with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(project), '')):
-            p.open_project()
+            p.open_project();wait()
         def check_restored_plot():
             deadline = time.monotonic() + 10
             while p.task is not None and time.monotonic() < deadline:
@@ -170,7 +177,7 @@ def check_qt_workflow():
             assert frequencies[np.argmax(db.max(axis=1))] == 1000
             assert p.axes.get_ylim() == (0., RATE/2) and p.axes.get_ylabel() == 'Frequency (Hz)'
             assert p.figure.axes[1].get_ylabel() == 'Power relative to peak (dB)'
-            assert len(p.axes.collections) == 1 and len(p.patches) == len(before)
+            assert len(p.axes.collections) == 2 and len(p.region_overlay.get_paths()) == len(before)
 
         check_restored_plot()
         # Open the HTML before displaying a spectrogram for this WAV.
@@ -179,12 +186,12 @@ def check_qt_workflow():
         p.set_audio(other, ask=False)
         p.set_audio(wav, ask=False)
         with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(report), '')):
-            p.load_regions()
+            p.load_regions();wait()
         check_restored_plot()
         # Opening the same report again reuses the mesh; overlays appear only once.
         existing = p.axes.collections[0]
         with patch.object(QFileDialog, 'getOpenFileName', return_value=(str(report), '')):
-            p.load_regions()
+            p.load_regions();wait()
         assert p.task is None and p.axes.collections[0] is existing
         check_restored_plot()
 

@@ -26,6 +26,7 @@ save_and_export
     Write the reviewed clip set, playback list, source mappings and integrity hashes.
 """
 from output_folders import new_run_folder
+from bisect import bisect_right
 from pathlib import Path
 from datetime import datetime, timezone
 import copy
@@ -261,7 +262,7 @@ def approve_segments(data, indices, reviewer):
     indices = list(dict.fromkeys(indices))
     if not indices:
         raise ValueError('Select at least one clip to approve.')
-    draft = copy.deepcopy(data)
+    draft = dict(data, segments=list(data['segments']), changes=[])
     count = 0
     for index in indices:
         if not isinstance(index, int) or not 0 <= index < len(draft['segments']):
@@ -272,12 +273,13 @@ def approve_segments(data, indices, reviewer):
         checked=(item.get('pdf_boundary_review') or {}).get('signature')
         if item['status'] != 'approved' or checked!=pdf_review_signature(draft,item):
             try:
+                draft['segments'][index] = copy.copy(item)
                 approve_segment(draft, index, reviewer)
             except ValueError as exc:
                 raise ValueError(f"Clip {item['id']}: {exc}") from exc
             count += 1
     data['segments'] = draft['segments']
-    data['changes'] = draft['changes']
+    data['changes'].extend(draft['changes'])
     return count
 
 
@@ -298,6 +300,60 @@ def unresolved_bounds(item):
             float(item.get('source_end', item['original']['end'])))
 
 
+def transcription_ranges(data, item, start, end):
+    """Yield the included parts of one unresolved row on the source sample grid."""
+    first, last = round(start * RATE), round(end * RATE)
+    for left, right in data.get('asr_skipped_ranges', {}).get(item['id'], []):
+        if right <= first:
+            continue
+        if left >= last:
+            break
+        if first < left:
+            yield first / RATE, left / RATE
+        first = max(first, right)
+    if first < last:
+        yield first / RATE, last / RATE
+
+
+def toggle_span_transcription(data, item, start, end, reviewer=''):
+    """Skip the selected remainder, or restore it if it is already fully skipped."""
+    ranges = data.setdefault('asr_skipped_ranges', {})
+    old = ranges.get(item['id'], [])
+    skip = bool(list(transcription_ranges(data, item, start, end)))
+    a, b = round(start * RATE), round(end * RATE)
+    updated = []
+    for left, right in old:
+        if right < a or left > b:
+            updated.append([left, right])
+        elif skip:
+            a, b = min(a, left), max(b, right)
+        else:
+            if left < a:
+                updated.append([left, a])
+            if right > b:
+                updated.append([b, right])
+    if skip:
+        updated.append([a, b])
+    if updated:
+        ranges[item['id']] = sorted(updated)
+    else:
+        ranges.pop(item['id'], None)
+    if not ranges:
+        data.pop('asr_skipped_ranges')
+    data.setdefault('asr_preference_history',[]).append(dict(
+        action='skip_transcription' if skip else 'include_in_transcription',
+        item_id=item['id'], start=start, end=end, time_utc=utc_now(), reviewer=reviewer.strip()))
+    return skip
+
+
+def same_snr_source(snapshot, session):
+    """An ASR queue preference does not change the audio used to calculate SNR."""
+    if snapshot is None or session is None:
+        return snapshot is session
+    return ({k:v for k,v in snapshot.items() if k not in ('asr_skipped_ranges','asr_preference_history')} ==
+            {k:v for k,v in session.items() if k not in ('asr_skipped_ranges','asr_preference_history')})
+
+
 def visible_unresolved(data):
     """Show only source ranges outside active manually created clips."""
     covered = sorted((round(float(item['source_start']) * RATE),
@@ -305,11 +361,21 @@ def visible_unresolved(data):
                      for item in data.get('segments', [])
                      if item.get('parent_unresolved_id') and item.get('original') is None
                      and item.get('status') != 'excluded')
+    # Parent spans can overlap and are kept in session order. Jump directly to
+    # the first covered interval which could intersect each parent.
+    merged = []
+    for left, right in covered:
+        if merged and left <= merged[-1][1]:
+            merged[-1][1] = max(merged[-1][1], right)
+        else:
+            merged.append([left, right])
+    ends = [right for _, right in merged]
     result = []
     for index, item in enumerate(data.get('unresolved', [])):
         first, last = (round(t * RATE) for t in unresolved_bounds(item))
         cursor = first
-        for left, right in covered:
+        for n in range(bisect_right(ends, first), len(merged)):
+            left, right = merged[n]
             if left >= last:
                 break
             if right <= cursor:
@@ -322,6 +388,10 @@ def visible_unresolved(data):
         if cursor < last:
             result.append((index, item, cursor / RATE, last / RATE))
     return result
+
+
+def under_one_second(start, end):
+    return round(end * RATE) - round(start * RATE) < RATE
 
 
 def downstream_unresolved(data, approved_ranges):
@@ -377,6 +447,11 @@ def label_unresolved(data,index,label,reviewer,start=None,end=None):
                      'source_start':a, 'source_end':b, 'label':item['label'] if item['label'] in LABELS else 'unclassified', 'status':'pending',
                      'category':item.get('category','unresolved'), 'reviewed_by':None,
                      'split_from':item['id']}
+            skipped = data.get('asr_skipped_ranges', {}).get(item['id'], [])
+            inherited = [[max(x, round(a*RATE)), min(y, round(b*RATE))] for x,y in skipped
+                         if x < round(b*RATE) and y > round(a*RATE)]
+            if inherited:
+                data['asr_skipped_ranges'][sibling['id']] = inherited
             leftovers.append(sibling)
     item.update(label=label,source_start=start,source_end=end,status='pending',reviewed_by=None)
     data['unresolved'].extend(leftovers)
@@ -407,13 +482,38 @@ def add_from_unresolved(data,index,start,end,label,reviewer):
     selected_start, selected_end = unresolved_bounds(parent)
     if start < selected_start - 1/RATE or end > selected_end + 1/RATE:
         raise ValueError('The new clip must be inside the selected unresolved span or gap.')
-    covered = [(a, b) for i, _, a, b in visible_unresolved(data) if i == index]
+    covered = [(a, b) for _, _, a, b in visible_unresolved(dict(data, unresolved=[parent]))]
     if not any(a - 1/RATE <= start < end <= b + 1/RATE for a, b in covered):
         raise ValueError('The new clip overlaps a segment already added from an unresolved span.')
+    return append_manual_clip(data,[parent['id']],start,end,label,reviewer)
+
+
+def add_combined_clip(data, spans, start, end, label, reviewer):
+    """Create one continuous candidate from selected unresolved rows and intervening audio."""
+    if label not in ('speech','mixed') or not reviewer.strip():
+        raise ValueError('Choose speech or mixed and enter the reviewer name.')
+    start,end=validate_bounds(start,end,data['source']['duration_seconds'])
+    if not min(s[2] for s in spans)-1/RATE <= start < end <= max(s[3] for s in spans)+1/RATE:
+        raise ValueError('Keep both boundaries inside the selected range.')
+    if any(s[2]>=end or s[3]<=start for s in spans):
+        raise ValueError('The marked clip must include audio from every selected row.')
+    if any(a<end and b>start for item in data['segments'] if item['status']!='excluded'
+           for a,b in item_source_ranges(item)):
+        raise ValueError('A candidate already covers part of this range.')
+    visible = {(i,a,b) for i,_,a,b in spans}
+    if any((i,a,b) not in visible and item.get('category') != 'uncovered_gap' and a<end and b>start
+           for i,item,a,b in visible_unresolved(data)):
+        raise ValueError('Select the intervening unresolved rows too.')
+    return append_manual_clip(data,list(dict.fromkeys(s[1]['id'] for s in spans)),start,end,label,reviewer.strip())
+
+
+def append_manual_clip(data, parents, start, end, label, reviewer):
     item={'id':'manual-'+uuid.uuid4().hex[:12], 'original':None,
           'label':label, 'status':'pending', 'source_start':start, 'source_end':end,
           'source_mode':'continuous_source', 'candidate_file':None,
-          'parent_unresolved_id':parent['id'], 'reviewed_by':None}
+          'parent_unresolved_id':parents[0], 'reviewed_by':None}
+    if len(parents)>1:
+        item['parent_unresolved_ids']=parents
     data['segments'].append(item)
     audit(data,'add_clip_from_unresolved',reviewer,item['id'],None,item)
     return len(data['segments'])-1
