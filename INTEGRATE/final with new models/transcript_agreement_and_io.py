@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Any
 
 NORMALIZATION_VERSION = "pdf_step6_arabic_known_spellings_v3"
-AGREEMENT_RULE_VERSION = "pdf_step6_cohere_final_v4"
-BASE_REVIEW_WORD_EDITS = 3
+AGREEMENT_RULE_VERSION = "cohere_agreement_v5"
+MAX_ACCEPTED_CER = 0.04
+BASE_REVIEW_WORD_EDITS = 4
 BASE_CLIP_SECONDS = 15
 EXTRA_WORD_SECONDS = 5
 COMPARISON_FIELDS = (
@@ -125,7 +126,7 @@ def comparison_policy() -> dict[str, Any]:
     return dict(normalization_version=NORMALIZATION_VERSION,
                 agreement_rule_version=AGREEMENT_RULE_VERSION,
                 engine="jiwer", reference="transcript_a",
-                maximum_accepted_cer=0.02, base_review_word_edits=BASE_REVIEW_WORD_EDITS,
+                maximum_accepted_cer=MAX_ACCEPTED_CER, base_review_word_edits=BASE_REVIEW_WORD_EDITS,
                 unresolved_base_duration_seconds=BASE_CLIP_SECONDS,
                 unresolved_full_seconds_per_extra_word=EXTRA_WORD_SECONDS,
                 letter_map={"أ/إ/آ/ٱ": "ا", "ة": "ه", "ى": "ي"},
@@ -220,9 +221,9 @@ def comparison_details(first: str, second: str, *, unresolved_duration: float | 
     cer_a_vs_b = float(cer(right, left)) if right else None
     cer_b_vs_a = character_error_rate if left else None
     word_limit = review_word_limit(unresolved_duration)
-    if left and right and (left == right or character_error_rate <= 0.02):
+    if left and right and (left == right or character_error_rate <= MAX_ACCEPTED_CER):
         status = "accepted"
-        reason = "Identical after normalization." if left == right else "Normalized CER is at most 2%."
+        reason = "Identical after normalization." if left == right else f"Normalized CER is at most {MAX_ACCEPTED_CER:.0%}."
     elif word_edits <= word_limit:
         status = "needs_review"
         reason = f"Within the review limit of {word_limit} word edits. Listen and choose A/B or correct the text."

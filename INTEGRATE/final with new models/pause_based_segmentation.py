@@ -37,6 +37,9 @@ VOCAL_PAUSE_FLANK_SECONDS = 0.60
 VOCAL_PAUSE_FLANK_DROP_DB = 12.0
 MIN_EDGE_SECONDS = 0.10
 MAX_EDGE_SECONDS = 0.20
+# Permit short natural breaks across eligible blocks. The full clip still
+# includes every intervening sample and may not exceed MAX_SECONDS.
+GLOBAL_MERGE_MAX_GAP_SECONDS = 2.0
 
 
 def vocal_pause_candidates(starts, ends, levels, references, minimum=VOCAL_PAUSE_MIN_SECONDS):
@@ -534,6 +537,102 @@ def extend_candidates_with_short_spans(audio, groups, unresolved, pauses, block_
     return segments, remaining, merge_intervals(pauses + extra_pauses)
 
 
+def regroup_supported_pauses(groups, unresolved, pauses, start, end, left, right):
+    """Replan an eligible block using measured pauses, never arbitrary cut points.
+
+    Unlike the initial fixed-padding plan, try the full allowed padding range.
+    Preserve all active samples already covered by candidates; only adopt a plan
+    that covers additional active samples. Reconsider several short phrases and
+    neighboring candidates together. Unchanged clips retain their metadata.
+    """
+    if not unresolved:
+        return groups, unresolved
+    rate = 16000
+    minimum, maximum = round(MIN_SECONDS * rate), round(MAX_SECONDS * rate)
+    min_pad, max_pad, target = (round(x * rate) for x in
+                                (MIN_EDGE_SECONDS, MAX_EDGE_SECONDS, EDGE_SECONDS))
+    active = [(round(a*rate), round(b*rate)) for a,b in
+              subtract_intervals([[start,end]], merge_intervals(pauses))
+              if round(b*rate)>round(a*rate)]
+    n = len(active)
+    if not n:
+        return groups, unresolved
+    old = sorted((round(g['start']*rate), round(g['end']*rate)) for g in groups)
+    protected = []
+    k = 0
+    for a,b in active:
+        while k < len(old) and old[k][1] <= a:
+            k += 1
+        j, covered = k, 0
+        while j < len(old) and old[j][0] < b:
+            covered += max(0, min(b,old[j][1])-max(a,old[j][0]))
+            j += 1
+        protected.append(covered)
+    # Lexicographic objective: preserve previously covered audio, maximize new
+    # active samples, then prefer padding close to the original 150 ms target.
+    scores = [(0,0,0,0)]*(n+1)
+    choices = [None]*n
+    lo,hi=round(left*rate),round(right*rate)
+    for i in range(n-1,-1,-1):
+        best = scores[i+1]
+        first = active[i][0]
+        left_gap = first - (active[i-1][1] if i else lo)
+        left_cap = min(max_pad, left_gap//2 if i else left_gap)
+        if left_cap < min_pad:
+            scores[i] = best
+            continue
+        total = keep = 0
+        for j in range(i,n):
+            a,b=active[j]
+            total += b-a
+            keep += protected[j]
+            extent=b-first
+            if extent+2*min_pad>maximum:
+                break
+            right_gap=(active[j+1][0] if j+1<n else hi)-b
+            right_cap=min(max_pad, right_gap//2 if j+1<n else right_gap)
+            if right_cap<min_pad or extent+left_cap+right_cap<minimum:
+                continue
+            lp,rp=min(target,left_cap),min(target,right_cap)
+            # Grow or shrink only the quiet context, never speech, to meet 5–15 s.
+            deficit=max(0,minimum-extent-lp-rp)
+            delta=min(deficit,left_cap-lp);lp+=delta;rp+=deficit-delta
+            excess=max(0,extent+lp+rp-maximum)
+            delta=min(excess,lp-min_pad);lp-=delta;rp-=excess-delta
+            if not (min_pad<=lp<=left_cap and min_pad<=rp<=right_cap):
+                continue
+            x,y=first-lp,b+rp
+            tail=scores[j+1]
+            score=(keep+tail[0],total+tail[1],tail[2]-1,
+                   tail[3]-abs(lp-target)-abs(rp-target))
+            if score>best:
+                best,choices[i]=score,(j,x,y)
+        scores[i]=best
+    previous=sum(protected)
+    if scores[0][0]!=previous or scores[0][1]<=previous:
+        return groups, unresolved
+    old_by_bounds={(round(g['start']*rate),round(g['end']*rate)):g for g in groups}
+    proposed,remaining=[],[]
+    i=0
+    while i<n:
+        if choices[i] is None:
+            a,b=active[i]
+            remaining.append(dict(start=a/rate,end=b/rate,
+                reason='No 5–15 s candidate with measured natural pauses at both edges after regrouping; review manually.'))
+            i+=1
+            continue
+        j,a,b=choices[i]
+        clip=old_by_bounds.get((a,b))
+        if clip is None:
+            clip=dict(start=a/rate,end=b/rate,speech_start=active[i][0]/rate,
+                      speech_end=active[j][1]/rate,regrouped=True)
+        if set(edge_pause_evidence(clip,pauses))!={'start','end'}:
+            return groups,unresolved
+        proposed.append(clip)
+        i=j+1
+    return proposed,remaining
+
+
 def group_short_unresolved(unresolved, candidates):
     """Group consecutive short spans within one eligible block, preserving source pauses."""
     timeline = sorted([(item['start'], False, item) for item in unresolved] +
@@ -571,6 +670,313 @@ def group_short_unresolved(unresolved, candidates):
             result.append(timeline[i][2])
         i = j
     return result
+
+
+
+def merge_short_spans_across_blocks(unresolved, candidates, pauses, regions, duration):
+    """Promote nearby short leftovers using source time, not Step 3 block IDs.
+
+    Internal gaps up to GLOBAL_MERGE_MAX_GAP_SECONDS remain in the original WAV. A music
+    label or existing candidate is a hard barrier. Only measured outer pause
+    evidence can supply padding. Work on the sample grid and optimize covered
+    unresolved audio, then the number of absorbed rows. No forced boundaries.
+    """
+    rate = 16000
+    minimum, maximum = round(MIN_SECONDS*rate), round(MAX_SECONDS*rate)
+    min_pad, max_pad, target = (round(x*rate) for x in
+                                (MIN_EDGE_SECONDS, MAX_EDGE_SECONDS, EDGE_SECONDS))
+    rows = sorted(unresolved, key=lambda u: (u['start'], u['end']))
+    ranges = [(round(u['start']*rate),round(u['end']*rate)) for u in rows]
+    n = len(rows)
+    if not n:
+        return [], rows
+    evidence = [(round(a*rate),round(b*rate)) for a,b in merge_intervals(pauses)]
+    ev_starts = [a for a,_ in evidence]
+    barriers = [(round(a*rate),round(b*rate)) for a,b in merge_intervals(
+        [(g['start'],g['end']) for g in candidates] +
+        [(r['start'],r['end']) for r in regions if r['label']=='music'])]
+    barrier_ends = [b for _,b in barriers]
+    total_samples = round(duration*rate)
+
+    def available_edge(t, side):
+        # The pause must touch the exact active edge; a nearby pause is not enough.
+        k = bisect_right(ev_starts, t if side=='right' else t-1)-1
+        if k < 0:
+            return 0
+        a,b = evidence[k]
+        if not a <= t <= b:
+            return 0
+        return max(0,min(max_pad, t-a if side=='left' else b-t))
+
+    def crosses_barrier(a,b):
+        k=bisect_right(barrier_ends,a)
+        return k<len(barriers) and barriers[k][0]<b
+
+    scores = [(0,0,0,0)]*(n+1)
+    choices = [None]*n
+    for i in range(n-1,-1,-1):
+        best=scores[i+1]
+        a,b=ranges[i]
+        if not 0<b-a<minimum:
+            scores[i]=best
+            continue
+        before=ranges[i-1][1] if i else 0
+        lp_cap=min(available_edge(a,'left'), (a-before)//2 if i else a)
+        k=bisect_right(barrier_ends,a)
+        if k:
+            lp_cap=min(lp_cap,a-barriers[k-1][1])
+        if lp_cap<min_pad:
+            scores[i]=best
+            continue
+        covered=0
+        for j in range(i,n):
+            x,y=ranges[j]
+            if not 0<y-x<minimum or (j>i and not 0<=x-ranges[j-1][1]<=round(GLOBAL_MERGE_MAX_GAP_SECONDS*rate)):
+                break
+            if y-a+2*min_pad>maximum or crosses_barrier(a,y):
+                break
+            covered+=y-x
+            after=ranges[j+1][0] if j+1<n else total_samples
+            rp_cap=min(available_edge(y,'right'), (after-y)//2 if j+1<n else after-y)
+            k=bisect_right(barrier_ends,y)
+            if k<len(barriers):
+                rp_cap=min(rp_cap,barriers[k][0]-y)
+            extent=y-a
+            if rp_cap<min_pad or extent+lp_cap+rp_cap<minimum:
+                continue
+            lp,rp=min(target,lp_cap),min(target,rp_cap)
+            deficit=max(0,minimum-extent-lp-rp)
+            delta=min(deficit,lp_cap-lp);lp+=delta;rp+=deficit-delta
+            excess=max(0,extent+lp+rp-maximum)
+            delta=min(excess,lp-min_pad);lp-=delta;rp-=excess-delta
+            if not(min_pad<=lp<=lp_cap and min_pad<=rp<=rp_cap):
+                continue
+            if crosses_barrier(a-lp,y+rp):
+                continue
+            tail=scores[j+1]
+            score=(covered+tail[0],j-i+1+tail[1],tail[2]-1,
+                   tail[3]-abs(lp-target)-abs(rp-target))
+            if score>best:
+                best,choices[i]=score,(j,a-lp,y+rp)
+        scores[i]=best
+    merged,remaining=[],[]
+    i=0
+    while i<n:
+        if choices[i] is None:
+            remaining.append(rows[i]);i+=1;continue
+        j,a,b=choices[i]
+        merged.append(dict(start=a/rate,end=b/rate,speech_start=ranges[i][0]/rate,
+                           speech_end=ranges[j][1]/rate,
+                           merged_unresolved_parts=[dict(start=r['start'],end=r['end']) for r in rows[i:j+1]]))
+        i=j+1
+    return merged,remaining
+
+
+def absorb_short_neighbors(unresolved, candidates, pauses, regions, duration):
+    """Globally assign short unresolved spans to either adjacent candidate.
+
+    Each option retains one complete existing candidate, any adjacent short
+    fragments, and all intervening original samples. Optimize total recovered
+    unresolved samples first, then count; never absorb the same row twice.
+    """
+    rate = 16000
+    minimum, maximum = round(MIN_SECONDS*rate), round(MAX_SECONDS*rate)
+    min_pad, max_pad, target = (round(v*rate) for v in
+                                (MIN_EDGE_SECONDS, MAX_EDGE_SECONDS, EDGE_SECONDS))
+    timeline = sorted([(round(c['start']*rate), round(c['end']*rate), True, c)
+                       for c in candidates] +
+                      [(round(u['start']*rate), round(u['end']*rate), False, u)
+                       for u in unresolved], key=lambda r: (r[0],r[1]))
+    n = len(timeline)
+    if not n or not candidates or not unresolved:
+        return [], list(unresolved)
+    # Unexpected overlaps are not safe to repair by merging.
+    if any(a[1]>b[0] for a,b in zip(timeline,timeline[1:])):
+        return [], list(unresolved)
+    evidence = [(round(a*rate),round(b*rate)) for a,b in merge_intervals(pauses)]
+    ev_starts = [a for a,_ in evidence]
+    barriers = [(round(a*rate),round(b*rate)) for a,b in merge_intervals(
+        (r['start'],r['end']) for r in regions if r['label']=='music')]
+    barrier_ends = [b for _,b in barriers]
+    total = round(duration*rate)
+
+    def crosses_music(a,b):
+        k=bisect_right(barrier_ends,a)
+        return k<len(barriers) and barriers[k][0]<b
+
+    def cap(t, left, index):
+        k=bisect_right(ev_starts,t-1 if left else t)-1
+        if k<0 or not evidence[k][0]<=t<=evidence[k][1]:
+            return 0
+        a,b=evidence[k]
+        limit = (t-a if left else b-t)
+        # Reserve half the free gap if another unresolved row could need it.
+        j=index-1 if left else index+1
+        if 0<=j<n:
+            neighbor=timeline[j]
+            gap=t-neighbor[1] if left else neighbor[0]-t
+            limit=min(limit,gap if neighbor[2] else gap//2)
+        else:
+            limit=min(limit,t if left else total-t)
+        k=bisect_right(barrier_ends,t)
+        if left and k:
+            limit=min(limit,t-barriers[k-1][1])
+        if not left and k<len(barriers):
+            limit=min(limit,barriers[k][0]-t)
+        return max(0,min(max_pad,limit))
+
+    # Every range contains at most one existing candidate. Skipping a row
+    # retains it unchanged. Disjoint DP choices cannot claim a row twice.
+    scores=[(0,0,0,0)]*(n+1)
+    choices=[None]*n
+    for i in range(n-1,-1,-1):
+        scores[i]=scores[i+1]
+        a=timeline[i][0]
+        base=None
+        covered=count=0
+        for j in range(i,n):
+            x,y,is_candidate,item=timeline[j]
+            if (y-a>maximum or (j>i and x-timeline[j-1][1]>round(GLOBAL_MERGE_MAX_GAP_SECONDS*rate))
+                    or crosses_music(a,y)):
+                break
+            if is_candidate:
+                if base is not None: break
+                base=item
+                base_index=j
+            else:
+                if not 0<y-x<minimum: break
+                covered+=y-x;count+=1
+            if base is None or not count:
+                continue
+            # The unchanged far edge keeps the original validated padding.
+            old_a,old_b=timeline[base_index][:2]
+            old_lp=round(base['left_padding']*rate)
+            old_rp=round(base['right_padding']*rate)
+            if not(min_pad<=old_lp<=max_pad and min_pad<=old_rp<=max_pad):
+                continue
+            left_new=i!=base_index;right_new=j!=base_index
+            voice_a=a if left_new else old_a+old_lp
+            voice_b=y if right_new else old_b-old_rp
+            lp_cap=cap(a,True,i) if left_new else old_lp
+            rp_cap=cap(y,False,j) if right_new else old_rp
+            lp_min=min_pad if left_new else old_lp
+            rp_min=min_pad if right_new else old_rp
+            if lp_cap<lp_min or rp_cap<rp_min: continue
+            lp=min(target,lp_cap) if left_new else old_lp
+            rp=min(target,rp_cap) if right_new else old_rp
+            excess=max(0,voice_b-voice_a+lp+rp-maximum)
+            delta=min(excess,lp-lp_min);lp-=delta;rp-=excess-delta
+            if rp<rp_min: continue
+            start,end=voice_a-lp,voice_b+rp
+            if not minimum<=end-start<=maximum or crosses_music(start,end): continue
+            # Retain all of the old clip, even its original internal padding.
+            if start>old_a or end<old_b: continue
+            plan=dict(start=start/rate,end=end/rate,speech_start=voice_a/rate,
+                      speech_end=voice_b/rate)
+            if set(edge_pause_evidence(plan,pauses))!={'start','end'}: continue
+            tail=scores[j+1]
+            score=(covered+tail[0],count+tail[1],tail[2]-(end-start-(old_b-old_a)),tail[3]-1)
+            if score>scores[i]:
+                scores[i]=score
+                choices[i]=(j,base,plan)
+    replacements,remaining=[],[]
+    i=0
+    while i<n:
+        choice=choices[i]
+        if choice is None:
+            if not timeline[i][2]: remaining.append(timeline[i][3])
+            i+=1;continue
+        j,base,plan=choice
+        parts=[dict(start=r[3]['start'],end=r[3]['end']) for r in timeline[i:j+1] if not r[2]]
+        replacements.append((base,dict(plan,merged_unresolved_parts=parts)))
+        i=j+1
+    return replacements,remaining
+
+
+def propose_short_review_merges(unresolved, candidates, pauses, regions, duration):
+    """Length-valid proposals whose outer edges still need explicit listening review.
+
+    Keep the strict pass unchanged. Also allow a whole 5–15 s unresolved span
+    as a pending candidate, with optional neighboring short fragments. At most
+    one existing candidate or length-valid unresolved anchor per proposal. Never
+    cross music or another clip, and retain all source samples. Unconfirmed
+    context is not reported as detected silence.
+    """
+    rate=16000
+    minimum,maximum=5*rate,15*rate
+    min_pad,target,max_pad=(round(x*rate) for x in (MIN_EDGE_SECONDS,EDGE_SECONDS,MAX_EDGE_SECONDS))
+    timeline=sorted([(round(x['start']*rate),round(x['end']*rate),True,x) for x in candidates]+
+                    [(round(x['start']*rate),round(x['end']*rate),False,x) for x in unresolved],key=lambda x:(x[0],x[1]))
+    n=len(timeline)
+    if any(a[1]>b[0] for a,b in zip(timeline,timeline[1:])):
+        return [],list(unresolved)
+    evidence=[(round(a*rate),round(b*rate)) for a,b in merge_intervals(pauses)]
+    music=[(round(r['start']*rate),round(r['end']*rate)) for r in regions if r['label']=='music']
+    def crosses_music(a,b):
+        return any(x<b and y>a for x,y in music)
+    def context(t,left,i):
+        neighbor=i-1 if left else i+1
+        limit=(t-timeline[neighbor][1] if left else timeline[neighbor][0]-t) if 0<=neighbor<n else (t if left else round(duration*rate)-t)
+        if 0<=neighbor<n and not timeline[neighbor][2]:limit//=2
+        limit=max(0,min(target,limit))
+        for a,b in music:
+            if left and b<=t:limit=min(limit,t-b)
+            if not left and a>=t:limit=min(limit,a-t)
+        measured=max([0]+[min(limit,t-a if left else b-t) for a,b in evidence if a<=t<=b])
+        return limit,measured
+    scores=[(0,0,0,0)]*(n+1); choices=[None]*n
+    for i in range(n-1,-1,-1):
+        scores[i]=scores[i+1];a=timeline[i][0];base=None;full_span=False;count=covered=0
+        for j in range(i,n):
+            x,y,is_clip,row=timeline[j]
+            if y-a>maximum or (j>i and x-timeline[j-1][1]>round(GLOBAL_MERGE_MAX_GAP_SECONDS*rate)) or crosses_music(a,y):break
+            if is_clip:
+                if base is not None or full_span:break
+                base=row;base_i=j
+            else:
+                if not 0<y-x<=maximum:break
+                if y-x>=minimum:
+                    if base is not None or full_span:break
+                    full_span=True
+                count+=1;covered+=y-x
+            if count<1 or (base is None and count<2 and not full_span):continue
+            # Preserve established far edges of a retained candidate. New outer
+            # edges get up to 150 ms source context, never fabricated silence.
+            lcap,lmeas=context(a,True,i) if not (base is not None and i==base_i) else (0,0)
+            rcap,rmeas=context(y,False,j) if not (base is not None and j==base_i) else (0,0)
+            lp,rp=lcap,rcap
+            excess=max(0,y-a+lp+rp-maximum);d=min(excess,lp);lp-=d;rp-=excess-d
+            if not minimum<=y-a+lp+rp<=maximum or crosses_music(a-lp,y+rp):continue
+            left_known=base is not None and i==base_i
+            right_known=base is not None and j==base_i
+            lverified=round(base['left_padding']*rate) if left_known else min(lp,lmeas)
+            rverified=round(base['right_padding']*rate) if right_known else min(rp,rmeas)
+            # Padding is confirmed only if the WHOLE context is measured quiet.
+            lverified=lverified if left_known or lverified==lp and lp>=min_pad else 0
+            rverified=rverified if right_known or rverified==rp and rp>=min_pad else 0
+            start,end=(a-lp)/rate,(y+rp)/rate
+            boundary={}
+            if left_known and 'start' in base.get('boundary_evidence',{}):boundary['start']=base['boundary_evidence']['start']
+            elif not left_known and lverified>=min_pad:boundary.update(edge_pause_evidence(dict(start=start,end=end,speech_start=a/rate,speech_end=y/rate),pauses))
+            if right_known and 'end' in base.get('boundary_evidence',{}):boundary['end']=base['boundary_evidence']['end']
+            elif not right_known and rverified>=min_pad:
+                e=edge_pause_evidence(dict(start=start,end=end,speech_start=a/rate,speech_end=y/rate),pauses)
+                if 'end' in e:boundary['end']=e['end']
+            boundary={k:v for k,v in boundary.items() if (k=='start' and lverified>=min_pad) or (k=='end' and rverified>=min_pad)}
+            tail=scores[j+1];score=(covered+tail[0],count+tail[1],len(boundary)+tail[2],tail[3]-1)
+            if score>scores[i]:
+                scores[i]=score
+                choices[i]=(j,base,dict(start=start,end=end,left_padding=lverified/rate,right_padding=rverified/rate,
+                    boundary_evidence=boundary,unverified_context_start_seconds=(0 if left_known or lverified else lp/rate),
+                    unverified_context_end_seconds=(0 if right_known or rverified else rp/rate),
+                    merged_unresolved_parts=[dict(start=t[3]['start'],end=t[3]['end']) for t in timeline[i:j+1] if not t[2]]))
+    out=[];remaining=[];i=0
+    while i<n:
+        if choices[i] is None:
+            if not timeline[i][2]:remaining.append(timeline[i][3])
+            i+=1;continue
+        j,base,plan=choices[i];out.append((base,plan));i=j+1
+    return out,remaining
 
 
 def source_pause_intervals(audio, islands, start, end, *, minimum=VOCAL_PAUSE_MIN_SECONDS, ceiling=0.):
@@ -725,6 +1131,10 @@ def recover_long_spans(audio, active, groups, unresolved, left, right, checks, m
                              if a < p['pause_start'] < p['pause_end'] < b)
         proposals = merge_intervals((x,y) for x,y in proposals if a < x < y < b)
         if proposals:
+            # Keep supported internal pauses even when this isolated span cannot
+            # form a clip. The final block-wide regrouping may combine a short
+            # part with a neighboring candidate at one of these boundaries.
+            used_pauses.extend(proposals)
             i = positions[round(a*16000)]
             low = left if i == 0 else (active[i-1][1]+a)/2
             high = right if i+1 == len(active) else (b+active[i+1][0])/2
@@ -734,7 +1144,6 @@ def recover_long_spans(audio, active, groups, unresolved, left, right, checks, m
                     clip['recovered'] = True
                 recovered.extend(clips)
                 remaining.extend(leftovers)
-                used_pauses.extend(proposals)
                 continue
         remaining.append(item)
     return sorted(groups + recovered, key=lambda clip: clip['start']), remaining, used_pauses
@@ -784,8 +1193,8 @@ def render_html(data):
 <header><h1>Step 4: candidate segments</h1><div>{e(data['audio_name'])}</div></header><main>
 <section class="notice"><b>Human review required.</b> Detected pauses are candidates, not proof that words are intact. Listen to every clip, especially mixed audio and cuts at Step 3 region edges. Padding describes VAD-estimated non-speech, which can include music or noise.</section>
 <section class="notice"><b>Mixed/vocal continuity:</b> VAD-negative intervals in mixed regions are retained unless sustained quiet on the separated vocals (or conservative original-mixture checks) supports a gap. Sustained raw vocal-level drops provide pause proposals even when music keeps mixture VAD active. A short syllable dip is not a valid boundary. In mixed audio, background music can continue through a vocal pause. Remaining long spans stay unresolved when no supported 5–15 s grouping is possible. This is audio-preservation logic, not proof of vocals or a verified word boundary.</section>
-<section><h2>Overview</h2><p><b>Candidate clips:</b> {len(data['segments'])} &nbsp; <b>Unresolved spans:</b> {len(data['unresolved'])} &nbsp; <b>Eligible blocks:</b> {data['eligible_block_count']}</p><p>Settings: 5–15 s; target edge padding 0.15 s with at least 0.1 s on both edges; Silero VAD first pass {MIN_PAUSE_MS} ms; both edges require 0.1–0.2 s detector-estimated natural pause; raw 240 ms vocal pauses may supplement speech VAD. Adjacent labelled silence can supply measured edge context. Long unresolved spans get a targeted {REFINE_PAUSE_MS} ms pause check. No artificial silence or joins are generated.</p></section>
-<section><h2>Time accounting</h2><p>Speech/mixed according to Step 3: {eligible:.2f} s. Total candidate duration: {clip_time:.2f} s, including {coverage.get("adjacent_silence_in_clips",0.):.2f} s borrowed from adjacent Step 3 silence. Unresolved spans: {unresolved_time:.2f} s. Other eligible audio outside candidates and unresolved spans: {unchecked_time:.2f} s. Total labelled music/silence in Step 3: {excluded:.2f} s.</p><p>Unchecked audio can include VAD-missed speech; the music/silence labels can also be wrong. Review them against the original audio. These categories are time-accounting aids, not a measurement of transcription completeness.</p></section>
+<section><h2>Overview</h2><p><b>Candidate clips:</b> {len(data['segments'])} &nbsp; <b>Unresolved spans:</b> {len(data['unresolved'])} &nbsp; <b>Eligible blocks:</b> {data['eligible_block_count']}</p><p>Settings: 5–15 s; target edge padding 0.15 s with at least 0.1 s on both edges; Silero VAD first pass {MIN_PAUSE_MS} ms; both edges require 0.1–0.2 s detector-estimated natural pause; raw 240 ms vocal pauses may supplement speech VAD. Global short-span merging can preserve internal gaps up to {GLOBAL_MERGE_MAX_GAP_SECONDS:g} seconds across eligible blocks, provided no music-only region or other candidate is crossed. Length-valid unresolved spans and fallback merges with uncertain outer pauses appear as pending review candidates; measured padding is reported only where supported. Approve them individually after listening and correcting boundaries. Adjacent labelled silence can supply measured edge context. Long unresolved spans get a targeted {REFINE_PAUSE_MS} ms pause check. No artificial silence or joins are generated.</p></section>
+<section><h2>Time accounting</h2><p>Speech/mixed according to Step 3: {eligible:.2f} s. Total candidate duration: {clip_time:.2f} s, including {coverage.get("adjacent_silence_in_clips",0.):.2f} s retained from Step 3 silence (edges and internal gaps). Unresolved spans: {unresolved_time:.2f} s. Other eligible audio outside candidates and unresolved spans: {unchecked_time:.2f} s. Total labelled music/silence in Step 3: {excluded:.2f} s.</p><p>Unchecked audio can include VAD-missed speech; the music/silence labels can also be wrong. Review them against the original audio. These categories are time-accounting aids, not a measurement of transcription completeness.</p></section>
 <section><h2>Candidate clips</h2><div class="scroll"><table><tr><th>File</th><th>Start (s)</th><th>End (s)</th><th>Duration (s)</th><th>Label</th><th>Left padding (s)</th><th>Right padding (s)</th><th>Review notes</th><th>Listen</th></tr>{''.join(rows)}</table></div></section>
 <section><h2>Unresolved spans</h2><p>Each span is also saved intact with a little context in needs_manual_review. These WAVs can be shorter than 5 seconds or longer than 15 seconds and are not accepted corpus clips. Inspect and select valid pause boundaries manually.</p><div class="scroll"><table><tr><th>Start (s)</th><th>End (s)</th><th>Reason</th><th>Review audio</th></tr>{''.join(misses)}</table></div></section>
 <section><h2>Eligible audio outside clips and unresolved spans</h2><p>{len(unchecked)} intervals, total {unchecked_time:.2f} s. The original WAV remains unchanged. These detector-estimated pauses can still contain quiet words; listen before marking them reviewed.</p><details><summary>Show interval times</summary><div class="scroll"><table><tr><th>Start (s)</th><th>End (s)</th><th>Duration (s)</th></tr>{unchecked_rows}</table></div></details></section>
@@ -819,7 +1228,7 @@ def export_candidates(audio_path, regions, output_parent, progress=lambda text: 
         model=load_silero_vad()
         separator=mixed_pause_separator(regions,progress) if use_vocal_pauses else None
         output=new_run_folder(output_parent)
-        data=dict(version=3,audio_name=path.name,audio_size=path.stat().st_size,duration_seconds=duration,
+        data=dict(version=3,segmentation_revision='length_valid_review_v7',audio_name=path.name,audio_size=path.stat().st_size,duration_seconds=duration,
             created_utc=datetime.now(timezone.utc).isoformat(),
             method='PDF Step 4: continuous source clips, sustained pause evidence, 0.1–0.2 s natural edge context; human review required',
             min_duration=MIN_SECONDS,max_duration=MAX_SECONDS,target_edge_seconds=EDGE_SECONDS,
@@ -865,8 +1274,12 @@ def export_candidates(audio_path, regions, output_parent, progress=lambda text: 
                 audio, groups, unresolved, pauses, left, vad, checks)
             groups, unresolved, pauses = extend_candidates_with_short_spans(
                 audio, groups, unresolved, pauses, right, vad, checks, prepend=False)
+            # Reconsider the entire eligible block after both recovery and the
+            # original one-sided merges. Do not sacrifice already covered speech.
+            groups, unresolved = regroup_supported_pauses(
+                groups, unresolved, pauses, start, end, left, right)
             data['pause_intervals'].extend(dict(start=a,end=b,status='estimated_pause_review_required') for a,b in pauses)
-            data['unresolved'].extend(group_short_unresolved(unresolved, groups))
+            data['unresolved'].extend(unresolved)
             for segment in groups:
                 a,b=round(segment['start']*16000),round(segment['end']*16000)
                 segment['start'],segment['end']=a/16000,b/16000
@@ -891,6 +1304,9 @@ def export_candidates(audio_path, regions, output_parent, progress=lambda text: 
                     removed_gaps=[],synthetic_silence_start_seconds=0.,synthetic_silence_end_seconds=0.,
                     status='needs_review',notes=(['Recovered during the shorter-pause review pass.'] if segment.get('recovered') else []) + ['Continuous original source audio; both edges have 0.1–0.2 s detector-estimated natural pause.',
                         'Listen before approval: check full words, especially quiet consonants and sung onsets. No energy detector guarantees word boundaries.']))
+                if segment.get('regrouped'):
+                    data['segments'][-1]['regrouped'] = True
+                    data['segments'][-1]['notes'].append('Recovered by regrouping supported pauses with flexible natural edge padding.')
                 for key, position in (('prepended_unresolved', 'preceding'), ('appended_unresolved', 'following')):
                     if key in segment:
                         fragment = segment[key]
@@ -898,6 +1314,147 @@ def export_candidates(audio_path, regions, output_parent, progress=lambda text: 
                         row[key] = fragment
                         row['notes'].append(f"Includes {position} unresolved speech/mixed audio from "
                                             f"{fragment['start']:.3f} to {fragment['end']:.3f} s.")
+        # Final global pass: Step 3 silence can separate short eligible blocks.
+        # Keep the continuous original audio between them, not concatenated WAVs.
+        progress('Combining neighboring short unresolved spans across eligible blocks…')
+        all_pauses=merge_intervals((p['start'],p['end']) for p in data['pause_intervals'])
+        merged,remaining=merge_short_spans_across_blocks(data['unresolved'],data['segments'],
+                                                       all_pauses,regions,duration)
+        for segment in merged:
+            a,b=round(segment['start']*16000),round(segment['end']*16000)
+            evidence=edge_pause_evidence(segment,all_pauses)
+            lp=segment['speech_start']-a/16000
+            rp=b/16000-segment['speech_end']
+            if (not 5*16000<=b-a<=15*16000 or set(evidence)!={'start','end'} or
+                    not all(MIN_EDGE_SECONDS-1/16000<=v<=MAX_EDGE_SECONDS+1/16000 for v in (lp,rp))):
+                raise RuntimeError('Global short-span merge failed natural-pause validation.')
+            overlap=[r for r in regions if r['end']>a/16000 and r['start']<b/16000]
+            label='mixed' if any(r['label']=='mixed' for r in overlap) else 'speech'
+            filename=f"segment_{len(data['segments'])+1:05d}.wav"
+            audio.seek(a);samples=audio.read(b-a,dtype='int16',always_2d=True)
+            if len(samples)!=b-a:raise RuntimeError('Incomplete source audio while exporting merged candidate.')
+            sf.write(output/filename,samples,16000,subtype='PCM_16')
+            data['segments'].append(dict(file=filename,start=a/16000,end=b/16000,duration=(b-a)/16000,
+                label=label,kind='global_short_span_merge',left_padding=lp,right_padding=rp,
+                boundary_evidence=evidence,source_spans=[dict(start=a/16000,end=b/16000,clip_start=0.,clip_end=(b-a)/16000)],
+                removed_gaps=[],synthetic_silence_start_seconds=0.,synthetic_silence_end_seconds=0.,
+                status='needs_review',merged_unresolved_parts=segment['merged_unresolved_parts'],
+                notes=['Merged neighboring short unresolved spans using original continuous audio, including internal gaps.',
+                       'Both outer edges have detector-estimated natural pause; listen and verify complete words before approval.']))
+        # Absorb any remaining short fragments into either neighboring candidate,
+        # even if Step 3 split them into different eligible blocks. Rewrite the
+        # candidate WAV from the original source; do not concatenate clip files.
+        progress('Absorbing short unresolved spans into neighboring candidates…')
+        replacements,remaining=absorb_short_neighbors(remaining,data['segments'],all_pauses,regions,duration)
+        for old, segment in replacements:
+            a,b=round(segment['start']*16000),round(segment['end']*16000)
+            evidence=edge_pause_evidence(segment,all_pauses)
+            lp=segment['speech_start']-a/16000
+            rp=b/16000-segment['speech_end']
+            if (not 5*16000<=b-a<=15*16000 or set(evidence)!={'start','end'} or
+                    not all(MIN_EDGE_SECONDS-1/16000<=v<=MAX_EDGE_SECONDS+1/16000 for v in (lp,rp))):
+                raise RuntimeError('Neighbor absorption failed natural-pause validation.')
+            audio.seek(a);samples=audio.read(b-a,dtype='int16',always_2d=True)
+            if len(samples)!=b-a:raise RuntimeError('Incomplete source audio during neighbor absorption.')
+            sf.write(output/old['file'],samples,16000,subtype='PCM_16')
+            overlap=[r for r in regions if r['end']>a/16000 and r['start']<b/16000]
+            old_bounds=dict(start=old['start'],end=old['end'],kind=old['kind'])
+            old.update(start=a/16000,end=b/16000,duration=(b-a)/16000,
+                label='mixed' if any(r['label']=='mixed' for r in overlap) else 'speech',
+                kind='global_neighbor_absorption',left_padding=lp,right_padding=rp,
+                boundary_evidence=evidence,source_spans=[dict(start=a/16000,end=b/16000,clip_start=0.,clip_end=(b-a)/16000)],
+                status='needs_review',original_candidate_bounds=old_bounds,
+                absorbed_neighbor_parts=segment['merged_unresolved_parts'])
+            old['notes'].append('Extended existing candidate with adjacent short unresolved audio, preserving original samples and verified-duration outer pause evidence; listen before approval.')
+        data['segments'].sort(key=lambda item:item['start'])
+        data['neighbor_absorption']=dict(extended_candidates=len(replacements),
+            absorbed_unresolved_parts=sum(len(s['merged_unresolved_parts']) for _,s in replacements),
+            maximum_internal_gap_seconds=GLOBAL_MERGE_MAX_GAP_SECONDS,requires_natural_outer_pauses=True)
+        data['global_short_merge']=dict(merged_candidates=len(merged),
+            absorbed_unresolved_parts=sum(len(s['merged_unresolved_parts']) for s in merged),
+            maximum_internal_gap_seconds=GLOBAL_MERGE_MAX_GAP_SECONDS,requires_natural_outer_pauses=True,
+            crosses_music_regions=False)
+        # A length-valid merge is useful as a review candidate even if its
+        # new outer pause was not proven by the detector. Never auto-approve it.
+        progress('Preparing length-valid spans and merges for boundary review…')
+        proposed,remaining=propose_short_review_merges(remaining,data['segments'],all_pauses,regions,duration)
+        for old,plan in proposed:
+            a,b=round(plan['start']*16000),round(plan['end']*16000)
+            if not 5*16000<=b-a<=15*16000:raise RuntimeError('Invalid review merge duration.')
+            filename=old['file'] if old is not None else f"segment_{len(data['segments'])+1:05d}.wav"
+            audio.seek(a);samples=audio.read(b-a,dtype='int16',always_2d=True)
+            if len(samples)!=b-a:raise RuntimeError('Incomplete source audio during review merge.')
+            sf.write(output/filename,samples,16000,subtype='PCM_16')
+            overlap=[r for r in regions if r['end']>a/16000 and r['start']<b/16000]
+            single=old is None and len(plan['merged_unresolved_parts'])==1
+            row=dict(file=filename,start=a/16000,end=b/16000,duration=(b-a)/16000,
+                label='mixed' if any(r['label']=='mixed' for r in overlap) else 'speech',
+                kind='length_valid_needs_boundary_review' if single else 'merged_needs_boundary_review',status='needs_review',manual_boundary_review_required=True,
+                left_padding=plan['left_padding'],right_padding=plan['right_padding'],boundary_evidence=plan['boundary_evidence'],
+                unverified_context_start_seconds=plan['unverified_context_start_seconds'],unverified_context_end_seconds=plan['unverified_context_end_seconds'],
+                merged_unresolved_parts=plan['merged_unresolved_parts'],
+                source_spans=[dict(start=a/16000,end=b/16000,clip_start=0.,clip_end=(b-a)/16000)],
+                removed_gaps=[],synthetic_silence_start_seconds=0.,synthetic_silence_end_seconds=0.,
+                notes=[('LENGTH VALID' if single else 'MERGED') + ' — BOUNDARY REVIEW REQUIRED: valid 5–15 s continuous source interval. Outer natural pause(s) not fully verified. Listen and adjust source bounds if needed, then approve individually.'])
+            if old is None:data['segments'].append(row)
+            else:
+                row['original_candidate_bounds']=dict(start=old['start'],end=old['end'],kind=old['kind'])
+                old.update(row)
+        data['segments'].sort(key=lambda item:item['start'])
+        data['review_merges']=dict(candidates=len(proposed),single_length_valid_candidates=sum(old is None and len(p['merged_unresolved_parts'])==1 for old,p in proposed),absorbed_unresolved_parts=sum(len(p['merged_unresolved_parts']) for _,p in proposed),requires_individual_boundary_review=True)
+        # Provide concrete diagnostics for still-unresolved spans. The lack of
+        # pause evidence is different from a duration/gap/barrier rejection.
+        # This does not fabricate or relax outer-edge evidence.
+        ordered = sorted([(u['start'],u['end'],False,u) for u in remaining] +
+                         [(c['start'],c['end'],True,c) for c in data['segments']],
+                         key=lambda row:(row[0],row[1]))
+        def edge_supported(t, left):
+            a,b = (t-MIN_EDGE_SECONDS,t) if left else (t,t+MIN_EDGE_SECONDS)
+            return any(x-1e-8<=a and b<=y+1e-8 for x,y in all_pauses)
+        for i,(a,b,is_candidate,item) in enumerate(ordered):
+            if is_candidate or b-a>=MIN_SECONDS:
+                continue
+            neighbors=[]
+            for j,side in ((i-1,'previous'),(i+1,'next')):
+                if 0<=j<len(ordered):
+                    x,y,is_clip,_=ordered[j]
+                    neighbors.append(dict(side=side,kind='candidate' if is_clip else 'unresolved',
+                        gap_seconds=round(max(0.,a-y if side=='previous' else x-b),5),
+                        combined_extent_seconds=round(max(b,y)-min(a,x),5)))
+            detail=dict(start_pause_supported=edge_supported(a,True),
+                        end_pause_supported=edge_supported(b,False),
+                        max_internal_gap_seconds=GLOBAL_MERGE_MAX_GAP_SECONDS,neighbors=neighbors)
+            item['merge_diagnostics']=detail
+            missing=[side for side,ok in [('start',detail['start_pause_supported']),
+                                          ('end',detail['end_pause_supported'])] if not ok]
+            why=('; no measured 100 ms pause at own '+ ' and '.join(missing) if missing else '')
+            neighbor_text=', '.join(f"{n['side']} {n['kind']} gap {n['gap_seconds']:.2f} s, combined extent {n['combined_extent_seconds']:.2f} s" for n in neighbors)
+            item['reason']='No safe length-valid continuous merge within gap, music and overlap limits'+why+('. '+neighbor_text if neighbor_text else '')+'. Review boundaries manually.'
+        # Preserve the old within-block grouping of leftovers for manual review.
+        data['unresolved']=[]
+        pending=iter(sorted(remaining,key=lambda u:u['start']))
+        row=next(pending,None)
+        for start,end in blocks:
+            leftovers=[]
+            while row is not None and round(row['start']*16000)<round(end*16000):
+                # Do not silently drop unexpected ranges from the old detector.
+                if (round(row['start']*16000)<round(start*16000) or
+                        round(row['end']*16000)>round(end*16000)):
+                    data['unresolved'].append(row)
+                else:
+                    leftovers.append(row)
+                row=next(pending,None)
+            if leftovers:
+                local_candidates=[g for g in data['segments'] if g['end']>start and g['start']<end]
+                data['unresolved'].extend(group_short_unresolved(leftovers,local_candidates))
+        if row is not None:
+            data['unresolved'].append(row)
+            data['unresolved'].extend(pending)
+        data['unresolved'].sort(key=lambda u:u['start'])
+        # Account for silence retained anywhere in a candidate, including internal
+        # bridges across Step 3 silence, without counting it as eligible voice.
+        borrowed=sum(max(0.,min(c['end'],b)-max(c['start'],a))
+                     for c in data['segments'] for a,b in silence)
         for index,item in enumerate(data['unresolved'],1):
             item['mixed_continuity_protected']=any(r['label']=='mixed' and r['end']>item['start'] and r['start']<item['end'] for r in regions)
             write_unresolved_audio(audio,item,output,index)

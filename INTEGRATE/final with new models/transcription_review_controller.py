@@ -427,7 +427,10 @@ class ASRWorkspace(QObject):
                 r['transcript_'+key]=''
                 r['confidence_'+key]=None
             corpus.compare(r)
-        if not jobs:self.p.status('Both ASR engines have already run. Use Transcribe selected to rerun them.');return
+        # A repeat Auto process run still needs a checkpoint with the new SNR and reused transcripts.
+        if not jobs and self.p.auto_stage != 'asr':
+            self.p.status('Both ASR engines have already run. Use Transcribe selected to rerun them.')
+            return
         self.stop_event.clear();self.asr_running=True;self.ui.asrStop.setVisible(True)
         total=sum(map(len,jobs.values()));self.ui.asrProgress.setRange(0,total);self.ui.asrProgress.setValue(0)
         snapshot=self.p.project_payload(snapshot=False,include_asr=False)
@@ -497,6 +500,8 @@ class ASRWorkspace(QObject):
             self.select_final()
             state='Stopped after the current clip' if result['cancelled'] else 'Transcription finished'
             self.ui.asrInfo.setText(f"{state}: {result['completed']} / {result['total']} model/clip jobs. Errors: {len(result['errors'])}. Autosave: {autosave}")
+            if not total:
+                self.ui.asrInfo.setText(f'Existing transcripts reused. Autosave: {autosave}')
             self.p.status(self.ui.asrInfo.text())
             if result['errors']:self.w.append_log('ASR errors: '+'; '.join(result['errors']))
         try:self.p.start('Transcribing clips and unresolved spans…',action,done)

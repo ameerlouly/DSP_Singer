@@ -10,6 +10,8 @@ import copy
 import csv
 import os
 import tempfile
+import shutil
+from urllib.parse import quote
 import html
 import hashlib
 import json
@@ -367,11 +369,72 @@ def require_continuous_pdf_audio(record):
 SUMMARY_COLUMNS = (
     'Video', 'Duration', 'Speech', 'Music', 'Mixed', 'Segments',
     'Mean SNR', 'Accepted', 'Chosen by hand', 'Difficult',
+    'Segmented voice (s)', 'Not segmented voice (s)',
 )
 
 
-def process_summary(duration, regions, records, audit_log):
-    """Summarize source regions and current ASR outcomes."""
+def segmentation_coverage(duration, regions, session):
+    """Unique original voice time covered by current, continuous 5–15 s Part 4 candidates.
+
+    Count both pending and approved candidates, but never excluded clips, music,
+    silence, overlapping samples twice, or the length of an unresolved preview.
+    The source labels (speech/mixed) define the denominator, not the ASR queue.
+    """
+    limit = max(0, round(float(duration) * RATE))
+
+    def union(ranges):
+        merged = []
+        for a, b in sorted(ranges):
+            a, b = max(0, a), min(limit, b)
+            if b <= a:
+                continue
+            if merged and a <= merged[-1][1]:
+                merged[-1] = (merged[-1][0], max(b, merged[-1][1]))
+            else:
+                merged.append((a, b))
+        return merged
+
+    def source_intervals(labels):
+        return union((round(float(r['start']) * RATE), round(float(r['end']) * RATE))
+                     for r in regions if r.get('label') in labels)
+
+    clips = []
+    if session:
+        for item in session.get('segments', []):
+            if item.get('status') not in ('approved', 'pending') or item.get('label') not in VOICE:
+                continue
+            try:
+                a, b = review.pdf_audio_mapping(session, item)
+            except (ValueError, KeyError, TypeError, OverflowError):
+                # An invalid or discontinuous legacy clip does not count.
+                continue
+            a, b = round(a * RATE), round(b * RATE)
+            if 5 * RATE <= b-a <= 15 * RATE:
+                clips.append((a, b))
+    covered = union(clips)
+
+    def totals(source):
+        total = sum(b-a for a, b in source)
+        matched = 0
+        i = j = 0
+        while i < len(source) and j < len(covered):
+            a, b = source[i]
+            c, d = covered[j]
+            matched += max(0, min(b, d) - max(a, c))
+            if b <= d:
+                i += 1
+            else:
+                j += 1
+        return {'total': total / RATE, 'segmented': matched / RATE,
+                'not_segmented': (total-matched) / RATE,
+                'fraction': matched/total if total else None}
+
+    return {'voice': totals(source_intervals(VOICE)),
+            'speech_only': totals(source_intervals(('speech',)))}
+
+
+def process_summary(duration, regions, records, audit_log, *, session=None):
+    """Summarize source regions, Part 4 duration coverage and current ASR outcomes."""
     duration_by_label = {label: 0.0 for label in ('speech', 'music', 'mixed')}
     for region in regions:
         label = region.get('label')
@@ -402,6 +465,7 @@ def process_summary(duration, regions, records, audit_log):
     total = len(eligible)
     return {
         'duration': float(duration), 'region_seconds': duration_by_label,
+        'segmentation_coverage': segmentation_coverage(duration, regions, session),
         'segments': len(records), 'unresolved': sum(r.get('source_mode') == 'unresolved_preview' for r in records),
         'mean_snr': sum(snr_values) / len(snr_values) if snr_values else None,
         'snr_count': len(snr_values), 'asr_total': total, 'counts': counts,
@@ -419,7 +483,16 @@ def append_summary_workbook(path, video_name, summary):
         if 'Process summary' not in workbook:
             raise ValueError('Choose a workbook previously created by Save summary, or a new filename.')
         sheet = workbook['Process summary']
-        if tuple(sheet.cell(1, c).value for c in range(1, 11)) != SUMMARY_COLUMNS:
+        existing = tuple(sheet.cell(1, c).value for c in range(1, sheet.max_column + 1))
+        if existing == SUMMARY_COLUMNS[:-2]:
+            # Preserve old rows; their coverage cannot be reconstructed from the workbook.
+            for col, heading in enumerate(SUMMARY_COLUMNS[-2:], 11):
+                cell = sheet.cell(1, col, heading)
+                cell.fill = PatternFill('solid', fgColor='173B40')
+                cell.font = Font(bold=True, color='FFFFFF')
+                cell.alignment = Alignment(wrap_text=True, vertical='center')
+                sheet.column_dimensions[cell.column_letter].width = 25
+        elif existing != SUMMARY_COLUMNS:
             raise ValueError('The summary workbook columns do not match the expected format.')
     else:
         workbook = Workbook()
@@ -431,18 +504,22 @@ def append_summary_workbook(path, video_name, summary):
             cell.fill = PatternFill('solid', fgColor='173B40')
             cell.font = Font(bold=True, color='FFFFFF')
             cell.alignment = Alignment(wrap_text=True, vertical='center')
-        for column in 'ABCDEFGHIJ':
+        for column in 'ABCDEFGHIJKL':
             sheet.column_dimensions[column].width = 18
         sheet.column_dimensions['A'].width = 28
+        for column in 'KL':
+            sheet.column_dimensions[column].width = 25
     n = summary['asr_total']
     regions = summary['region_seconds']
     counts = summary['counts']
+    coverage = summary['segmentation_coverage']['voice']
     sheet.append([video_name, summary['duration']/60, regions['speech']/60,
                   regions['music']/60, regions['mixed']/60, summary['segments'],
                   summary['mean_snr'],
                   counts['accepted']/n if n else None,
                   counts['chosen']/n if n else None,
-                  counts['difficult']/n if n else None])
+                  counts['difficult']/n if n else None,
+                  coverage['segmented'], coverage['not_segmented']])
     row = sheet.max_row
     sheet.cell(row, 1).data_type = 's'
     for col in range(2, 6):
@@ -450,6 +527,8 @@ def append_summary_workbook(path, video_name, summary):
     sheet.cell(row, 7).number_format = '0.00 "dB"'
     for col in range(8, 11):
         sheet.cell(row, col).number_format = '0.0%'
+    for col in (11, 12):
+        sheet.cell(row, col).number_format = '0.00 "s"'
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = None
     try:
@@ -541,15 +620,22 @@ def review_html(rows, partial=None, playable=False):
     # Escape values for display and give audio and history cells their own controls.
     def cell(key, value):
         text = html.escape(str(value)) if value is not None else ''
-        if key == 'audio_file' and playable:
-            return f'<td>{text}<br><audio controls preload="metadata" src="{text}"></audio></td>'
+        if key == 'audio_file' and playable and value:
+            url = html.escape(quote(str(value), safe='/'), quote=True)
+            return (f'<td>{text}<br><audio controls preload="none" src="{url}"></audio>'
+                    f'<br><a href="{url}">Open WAV</a></td>')
         if key == 'change_log':
             details = text if value != '[]' else 'No changes recorded.'
             return f'<td><details><summary>View changes</summary>{details}</details></td>'
-        return f'<td dir="auto">{text}</td>'
+        css = ' class="transcript"' if key in ('model_A_transcript', 'model_B_transcript', 'final_transcript') else ''
+        return f'<td dir="auto"{css}>{text}</td>'
 
-    headers = ''.join(f'<th scope="col">{key}</th>' for key in REVIEW_COLUMNS)
-    body = ''.join('<tr>' + ''.join(cell(k, row[k]) for k in REVIEW_COLUMNS) + '</tr>' for row in rows)
+    columns = REVIEW_COLUMNS
+    if playable:
+        columns = (*REVIEW_COLUMNS[:3], 'audio_file',
+                   *(key for key in REVIEW_COLUMNS[3:] if key != 'audio_file'))
+    headers = ''.join(f'<th scope="col">{key}</th>' for key in columns)
+    body = ''.join('<tr>' + ''.join(cell(k, row[k]) for k in columns) + '</tr>' for row in rows)
     title = 'Speech corpus review' if partial is None else 'Speech corpus export'
     subtitle = ' · Partial export' if partial else ''
     return f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -563,14 +649,15 @@ section::-webkit-scrollbar-track{{background:#eaf2f2}}
 section::-webkit-scrollbar-thumb{{background:#527579;border:2px solid #eaf2f2;border-radius:7px}}
 table{{border-collapse:separate;border-spacing:0}}th,td{{padding:8px;border-right:1px solid #d7e3e6;border-bottom:1px solid #d7e3e6;vertical-align:top}}
 th{{position:sticky;top:0;background:#eaf2f2}}
-td:nth-child(n+6):nth-child(-n+8){{min-width:22em}}details{{min-width:10em;max-width:30em;overflow-wrap:anywhere}}audio{{width:200px}}
+td.transcript{{min-width:22em}}details{{min-width:10em;max-width:30em;overflow-wrap:anywhere}}audio{{width:200px}}
 @media print{{body{{display:block;height:auto;padding:0}}section{{overflow:visible}}th{{position:static}}}}
 </style><header><h1 id="report-title">{title}</h1><p>{len(rows)} clips{subtitle}</p></header>
+{'<p>Play each row in the audio_file column. Keep this HTML file and its companion WAV files in the same relative locations.</p>' if playable else ''}
 <section aria-labelledby="report-title" tabindex="0"><table><thead><tr>{headers}</tr></thead><tbody>{body}</tbody></table></section></html>"""
 
 
 # Use the destination extension to pick the writer for the same review table.
-def write_review_table(path, rows):
+def write_review_table(path, rows, *, playable=False):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, suffix=path.suffix, delete=False) as f:
@@ -583,7 +670,7 @@ def write_review_table(path, rows):
                 writer.writeheader()
                 writer.writerows(rows)
         elif suffix == '.html':
-            temporary.write_text(review_html(rows), encoding='utf-8')
+            temporary.write_text(review_html(rows, playable=playable), encoding='utf-8')
         elif suffix == '.json':
             temporary.write_text(json.dumps(rows, ensure_ascii=False, indent=2), encoding='utf-8')
         elif suffix == '.xlsx':
@@ -675,8 +762,61 @@ def report_rows(records, audit_log, session=None, source='', qualities=()):
     return list(review_rows(ordered,audit_log))
 
 
+def write_review_audio(record, destination, source=''):
+    """Write the exact reviewed PCM samples, streaming long unresolved spans."""
+    pieces = record.get('audio_pieces') or [dict(
+        path=record.get('source_origin') or source,
+        start=record['start'], end=record['end'])]
+    with sf.SoundFile(str(destination), mode='w', samplerate=RATE,
+                      channels=1, subtype='PCM_16', format='WAV') as dst:
+        for piece in pieces:
+            if not piece.get('path'):
+                raise ValueError(f"No source audio for {record['segment_id']}.")
+            with sf.SoundFile(str(piece['path'])) as src:
+                if (src.samplerate, src.channels, src.subtype) != (RATE, 1, 'PCM_16'):
+                    raise ValueError('Review playback requires 16 kHz mono PCM-16 audio.')
+                a, b = round(float(piece['start'])*RATE), round(float(piece['end'])*RATE)
+                if not 0 <= a < b <= len(src):
+                    raise ValueError(f"Invalid review audio interval: {record['segment_id']}.")
+                src.seek(a)
+                remaining = b-a
+                while remaining:
+                    n = min(remaining, RATE*10)
+                    data = src.read(n, dtype='int16')
+                    if len(data) != n:
+                        raise IOError('Review source audio ended unexpectedly.')
+                    dst.write(data)
+                    remaining -= n
+
+
+def export_playable_review(path, records, audit_log, source=''):
+    """Keep the standalone HTML and its clip WAVs portable as a folder."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    rows = list(review_rows(records, audit_log))
+    # Reserve a new companion folder; never overwrite audio belonging to an older report.
+    assets = path.parent / 'review_audio'
+    try:
+        assets.mkdir()
+    except FileExistsError:
+        assets = Path(tempfile.mkdtemp(prefix='review_audio_', dir=path.parent))
+    try:
+        for i, (record, row) in enumerate(zip(records, rows), 1):
+            target = assets / f'segment_{i:05d}.wav'
+            write_review_audio(record, target, source)
+            row['audio_file'] = target.relative_to(path.parent).as_posix()
+        return write_review_table(path, rows, playable=True)
+    except BaseException:
+        # The previous HTML, if any, is left intact if saving fails.
+        shutil.rmtree(assets, ignore_errors=True)
+        raise
+
+
 # Build the review rows once and write them in the user's chosen format.
 def export_review_csv(path, records, audit_log, session=None, source='', qualities=()):
+    if Path(path).suffix.lower() == '.html':
+        ordered = timeline_records(records, session, source, qualities)
+        return export_playable_review(path, ordered, audit_log, source)
     return write_review_table(path,report_rows(records,audit_log,session,source,qualities))
 
 

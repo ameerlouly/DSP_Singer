@@ -220,8 +220,9 @@ def corpus_fields(item):
 
 
 # Save both scores and the reason the reviewer chose this threshold.
-def export_report(records,threshold,directory,*,policy='conservative',justification=''):
-    if not justification.strip():raise ValueError('Enter the final threshold justification before saving the SNR report.')
+def export_report(records,threshold,directory,*,policy='conservative',justification='',provisional=False):
+    # Auto saves the measurements even when the reviewer still needs to justify the threshold.
+    if not provisional and not justification.strip():raise ValueError('Enter the final threshold justification before saving the SNR report.')
     records=reclassify(records,threshold,policy,justification)
     for row in records:row.setdefault('segmentation_status','resolved')
     base=new_run_folder(directory) / 'step5_snr'
@@ -246,7 +247,7 @@ def export_report(records,threshold,directory,*,policy='conservative',justificat
 <title>Audio Quality SNR</title><style>body{{font:15px/1.5 Segoe UI,Arial;margin:0;background:#EFF4F5;color:#173B40}}header{{background:#173B40;color:white;padding:28px}}main{{padding:22px}}section{{background:white;border:1px solid #D5E3E5;border-radius:8px;padding:20px;margin-bottom:18px}}.cards{{display:flex;gap:15px;flex-wrap:wrap}}.cards div{{background:#E8F3F0;padding:14px;border-radius:6px}}.scroll{{overflow:auto}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border-bottom:1px solid #D5E3E5;text-align:left;vertical-align:top}}th{{background:#EAF2F3;white-space:nowrap}}h1,h2{{margin-top:0}}</style>
 <header><h1>Audio Quality SNR</h1><div>Two independent estimates · human quality review</div></header><main>
 <section><div class="cards"><div>Clean: {counts['clean']}</div><div>Noisy: {counts['noisy']}</div><div>Unavailable: {counts['unavailable']}</div><div>Review needed: {review_count}</div></div></section>
-<section><h2>Threshold and decision</h2><p>Threshold: <b>{float(threshold):g} dB</b> · Rule: <b>{e(policy)}</b></p><p><b>Justification:</b> {e(justification.strip())}</p><p>20 dB is the PDF starting point. This threshold does not follow signal loudness. Human quality overrides are retained when the threshold changes.</p></section>
+<section><h2>Threshold and decision</h2><p>Threshold: <b>{float(threshold):g} dB</b> · Rule: <b>{e(policy)}</b></p><p><b>Justification:</b> {e(justification.strip() or 'Pending listening review')}</p><p>The initial threshold is 20 dB. This threshold does not follow signal loudness. Human quality overrides are retained when the threshold changes.</p></section>
 <section><h2>Methods and limits</h2><p>Pause-energy: 20 ms frames, 10 ms hop; subtract background-noise power estimated from natural pause anchors. Noise power is interpolated between observed anchors and held constant beyond them; unobserved changes cannot be recovered.</p><p>WADA-SNR: Kim and Stern (2008), alpha=0.4 waveform-distribution model and original CMU lookup table (−20 to 100 dB, 1 dB grid). Balanced blocks are combined by estimated signal/noise energies. Range-limited values are flagged and excluded from automatic decision selection. The JSON records every block and boundary condition.</p><p>These estimates are not ground truth. Disagreement above 6 dB, different quality labels, mixed/music content, unavailable methods and variable noise are flagged. Review before final labeling; no method silently replaces a human correction.</p></section>
 <section class="scroll"><table><tr>{''.join('<th>'+e(title)+'</th>' for key,title in columns)}</tr>{rows}</table></section></main></html>'''
     base.with_suffix('.html').write_text(doc,encoding='utf-8')

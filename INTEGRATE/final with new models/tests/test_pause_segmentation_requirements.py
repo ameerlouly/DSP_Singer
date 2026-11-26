@@ -59,8 +59,12 @@ class PDFPart4(unittest.TestCase):
                 self.assertEqual(len(data['segments']), 1)
                 clip = data['segments'][0]
                 self.assertEqual('prepended_unresolved' in clip, merged)
-                self.assertEqual(len(data['unresolved']), int(not merged))
-                if merged:
+                self.assertEqual(len(data['unresolved']), int(not merged and onset!=0.))
+                if onset==0.:
+                    self.assertTrue(clip['manual_boundary_review_required'])
+                    self.assertEqual(clip['left_padding'],0.)
+                    self.assertEqual(clip['start'],0.)
+                elif merged:
                     self.assertAlmostEqual(clip['duration'], 14.99)
                 else:
                     self.assertGreater(clip['start'], 2.14)
@@ -139,6 +143,279 @@ class PDFPart4(unittest.TestCase):
                 self.assertEqual(sum(g['start'] <= 8. and g['end'] >= 10. for g in groups), 1)
                 self.assertIn(expected, groups[1 if next_end == 17. else 0])
 
+    def test_short_fragments_promoted_with_flexible_padding(self):
+        # Two short phrases have a 4.67 s envelope. 150 ms on each end
+        # is insufficient, but the permitted 100–200 ms range makes it valid.
+        phrases = [[.5,2.7],[2.94,5.17]]
+        self.wave(phrases)
+        data,folder = self.export(cuts,phrases)
+        self.assert_contract(data,folder)
+        self.assertFalse(data['unresolved'])
+        self.assertEqual(len(data['segments']),1)
+        self.assertTrue(data['segments'][0]['regrouped'])
+        self.assertGreaterEqual(data['segments'][0]['duration'],5.)
+
+    def test_multiple_neighbors_regroup_without_dropping_old_clip(self):
+        # The default 150 ms edges cannot fit all three phrases within 15 s.
+        # Shrinking BOTH quiet edges (not the spoken audio) makes it possible.
+        phrases = [[.5,10.5],[10.8,12.7],[13.05,15.3]]
+        pauses = [[0.,.5],[10.5,10.8],[12.7,13.05],[15.3,16.]]
+        old,remaining=cuts.group_at_pauses(phrases,0.,16.)
+        self.assertTrue(remaining)
+        new,leftovers=cuts.regroup_supported_pauses(old,remaining,pauses,0.,16.,0.,16.)
+        self.assertFalse(leftovers)
+        self.assertEqual(len(new),1)
+        self.assertEqual(round((new[0]['end']-new[0]['start'])*RATE),15*RATE)
+        self.assertAlmostEqual(new[0]['speech_start'],.5)
+        self.assertAlmostEqual(new[0]['speech_end'],15.3)
+        self.assertEqual(set(cuts.edge_pause_evidence(new[0],pauses)),{'start','end'})
+        self.wave(phrases)
+        data,folder=self.export(cuts,phrases)
+        self.assert_contract(data,folder)
+        self.assertFalse(data['unresolved'])
+        self.assertEqual(len(data['segments']),1)
+
+    def test_regroup_rejects_overlong_or_missing_edge(self):
+        for active,pauses,end in [
+            ([[.5,15.31]],[[0.,.5],[15.31,16.]],16.),
+            ([[0.,6.],[6.4,9.]],[[6.,6.4],[9.,10.]],10.),
+        ]:
+            old,remaining=cuts.group_at_pauses(active,0.,end)
+            self.assertEqual(cuts.regroup_supported_pauses(old,remaining,pauses,0.,end,0.,end),
+                             (old,remaining))
+
+    def test_global_merge_screenshot_timing(self):
+        # The four displayed rows cross two Step 3 silence boundaries.
+        phrases=[[55.94,57.],[58.,60.1],[60.6,62.],[63.,66.38]]
+        regions=[dict(start=a,end=b,label=label) for a,b,label in [
+            (0.,55.94,'silence'),(55.94,57.,'speech'),(57.,58.,'silence'),
+            (58.,62.,'speech'),(62.,63.,'silence'),(63.,66.38,'speech'),
+            (66.38,70.,'silence')]]
+        self.wave(phrases,duration=70.)
+        data,folder=self.export(cuts,phrases,regions=regions)
+        self.assertEqual(data['segmentation_revision'],'length_valid_review_v7')
+        self.assertEqual(len(data['segments']),1)
+        self.assertFalse(data['unresolved'])
+        clip=data['segments'][0]
+        self.assertEqual(clip['kind'],'global_short_span_merge')
+        self.assertAlmostEqual(clip['start'],55.79)
+        self.assertAlmostEqual(clip['end'],66.53)
+        self.assertAlmostEqual(clip['duration'],10.74)
+        self.assertEqual(len(clip['merged_unresolved_parts']),4)
+        self.assertEqual(set(clip['boundary_evidence']),{'start','end'})
+        self.assertAlmostEqual(data['coverage_seconds']['adjacent_silence_in_clips'],2.3)
+        source,_=sf.read(self.path,dtype='int16')
+        actual,_=sf.read(folder/clip['file'],dtype='int16')
+        np.testing.assert_array_equal(actual,source[round(clip['start']*RATE):round(clip['end']*RATE)])
+        session=review.load_session(folder/'step4_segments.json',self.path)
+        self.assertEqual(session['segments'][0]['status'],'pending')
+        self.assertFalse(any(row['category']=='unresolved' for row in session['unresolved']))
+
+    def test_global_merge_latest_screenshot_1280ms_gap(self):
+        phrases=[[80.98,82.],[83.28,85.36],[85.68,88.]]
+        regions=[dict(start=a,end=b,label=label) for a,b,label in [
+            (0.,80.98,'silence'),(80.98,82.,'speech'),(82.,83.28,'silence'),
+            (83.28,85.36,'speech'),(85.36,85.68,'silence'),
+            (85.68,88.,'speech'),(88.,90.,'silence')]]
+        self.wave(phrases,duration=90.)
+        data,folder=self.export(cuts,phrases,regions=regions)
+        self.assert_contract(data,folder)
+        self.assertEqual(len(data['segments']),1)
+        self.assertFalse(data['unresolved'])
+        clip=data['segments'][0]
+        self.assertEqual(clip['kind'],'global_short_span_merge')
+        self.assertAlmostEqual(clip['start'],80.83)
+        self.assertAlmostEqual(clip['end'],88.15)
+        self.assertAlmostEqual(clip['duration'],7.32)
+        self.assertEqual(len(clip['merged_unresolved_parts']),3)
+
+    def test_review_merge_screenshot_without_outer_pause_evidence(self):
+        rows=[dict(start=a,end=b) for a,b in [(80.98,82.),(83.28,85.36),(85.68,88.)]]
+        plans,remaining=cuts.propose_short_review_merges(rows,[],[],[],90.)
+        self.assertFalse(remaining)
+        self.assertEqual(len(plans),1)
+        old,plan=plans[0]
+        self.assertIsNone(old)
+        self.assertEqual(plan['merged_unresolved_parts'],rows)
+        self.assertAlmostEqual(plan['end']-plan['start'],7.32)
+        self.assertEqual(plan['boundary_evidence'],{})
+        self.assertEqual(plan['left_padding'],0.)
+        self.assertAlmostEqual(plan['unverified_context_start_seconds'],.15)
+
+    def test_review_merge_absorbs_short_neighbor_with_unknown_outer_pause(self):
+        rows=[dict(start=11.5,end=13.5)]
+        base=dict(start=1.,end=11.,left_padding=.15,right_padding=.15,
+                  boundary_evidence={'start':{'retained_pause_seconds':.15}})
+        plans,remaining=cuts.propose_short_review_merges(rows,[base],[],[],20.)
+        self.assertFalse(remaining)
+        self.assertIs(plans[0][0],base)
+        plan=plans[0][1]
+        self.assertEqual(plan['start'],1.)
+        self.assertAlmostEqual(plan['end'],13.65)
+        self.assertEqual(set(plan['boundary_evidence']),{'start'})
+        self.assertEqual(plan['right_padding'],0.)
+        # Do not cross a music barrier or violate the maximum duration.
+        self.assertEqual(cuts.propose_short_review_merges(rows,[base],[],[dict(start=11.,end=11.5,label='music')],20.),([],rows))
+        long=dict(base,start=0.,end=14.);row=[dict(start=14.1,end=16.1)]
+        self.assertEqual(cuts.propose_short_review_merges(row,[long],[],[],20.),([],row))
+
+    def test_length_valid_unresolved_is_pending_candidate(self):
+        rows=[dict(start=457.36,end=465.)]
+        plans,remaining=cuts.propose_short_review_merges(rows,[],[],[],470.)
+        self.assertFalse(remaining)
+        self.assertEqual(len(plans),1)
+        _,plan=plans[0]
+        self.assertEqual(plan['merged_unresolved_parts'],rows)
+        self.assertAlmostEqual(plan['end']-plan['start'],7.94)
+        self.assertEqual(plan['boundary_evidence'],{})
+        self.assertEqual(plan['left_padding'],0.)
+        self.assertEqual(plan['right_padding'],0.)
+
+    def test_length_valid_anchor_absorbs_screenshot_neighbor(self):
+        rows=[dict(start=455.,end=456.),dict(start=457.36,end=465.)]
+        plans,remaining=cuts.propose_short_review_merges(rows,[],[],[],470.)
+        self.assertFalse(remaining)
+        self.assertEqual(len(plans),1)
+        self.assertEqual(plans[0][1]['merged_unresolved_parts'],rows)
+        self.assertAlmostEqual(plans[0][1]['end']-plans[0][1]['start'],10.3)
+        # A music-only barrier prevents the merge but not the standalone valid span.
+        plans,remaining=cuts.propose_short_review_merges(rows,[],[],[dict(start=456.,end=457.36,label='music')],470.)
+        self.assertEqual(remaining,rows[:1])
+        self.assertEqual(plans[0][1]['merged_unresolved_parts'],rows[1:])
+        # Never force-cut an oversized row or promote an isolated short row.
+        invalid=[dict(start=1.,end=3.),dict(start=10.,end=25.01)]
+        self.assertEqual(cuts.propose_short_review_merges(invalid,[],[],[],30.),([],invalid))
+
+    def test_length_valid_unresolved_export_and_session(self):
+        phrases=[[0.,7.64]]
+        self.wave(phrases,duration=7.64)
+        data,folder=self.export(cuts,phrases,regions=[dict(start=0.,end=7.64,label='speech')])
+        self.assert_contract(data,folder)
+        self.assertFalse(data['unresolved'])
+        clip=data['segments'][0]
+        self.assertEqual(clip['kind'],'length_valid_needs_boundary_review')
+        self.assertTrue(clip['manual_boundary_review_required'])
+        self.assertEqual(clip['duration'],7.64)
+        session=review.load_session(folder/'step4_segments.json',self.path)
+        self.assertEqual(len(session['segments']),1)
+        self.assertEqual(session['segments'][0]['status'],'pending')
+        self.assertTrue(session['segments'][0]['original']['manual_boundary_review_required'])
+
+    def test_absorption_across_1280ms_gap(self):
+        row=dict(start=12.,end=14.)
+        candidate=dict(start=.72,end=10.72,left_padding=.15,right_padding=.15)
+        pauses=[[.72,.87],[10.57,12.],[14.,14.2]]
+        changed,remaining=cuts.absorb_short_neighbors([row],[candidate],pauses,[],15.)
+        self.assertFalse(remaining)
+        self.assertEqual(len(changed),1)
+        self.assertAlmostEqual(changed[0][1]['end']-changed[0][1]['start'],13.43)
+
+    def test_still_unresolved_reason_includes_merge_diagnostics(self):
+        phrases=[[1.,2.],[5.,6.]]
+        self.wave(phrases,duration=8.)
+        regions=[dict(start=a,end=b,label=label) for a,b,label in [
+            (0.,1.,'silence'),(1.,2.,'speech'),(2.,5.,'silence'),(5.,6.,'speech'),(6.,8.,'silence')]]
+        data,folder=self.export(cuts,phrases,regions=regions)
+        self.assertFalse(data['segments'])
+        self.assertEqual(len(data['unresolved']),2)
+        self.assertEqual(data['unresolved'][0]['merge_diagnostics']['neighbors'][0]['gap_seconds'],3.)
+        self.assertIn('gap 3.00 s',data['unresolved'][0]['reason'])
+
+    def test_global_merge_respects_barriers_and_padding(self):
+        rows=[dict(start=a,end=b) for a,b in [(1.,3.),(4.,6.)]]
+        pauses=[[.8,1.],[3.,4.],[6.,6.2]]
+        regions=[dict(start=0.,end=3.,label='speech'),
+                 dict(start=3.,end=4.,label='silence'),
+                 dict(start=4.,end=7.,label='speech')]
+        merged,remaining=cuts.merge_short_spans_across_blocks(rows,[],pauses,regions,7.)
+        self.assertEqual(len(merged),1)
+        self.assertFalse(remaining)
+        self.assertAlmostEqual(merged[0]['end']-merged[0]['start'],5.3)
+        for existing, evidence, labels in [
+            ([], pauses[1:], regions),
+            ([], pauses[:-1], regions),
+            ([dict(start=3.3,end=3.7)],pauses,regions),
+            ([],pauses,[dict(r,label='music') if r['label']=='silence' else r for r in regions])]:
+            self.assertEqual(cuts.merge_short_spans_across_blocks(rows,existing,evidence,labels,7.),([],rows))
+
+    def test_global_merge_no_cross_long_gap_or_overlapping_output(self):
+        rows=[dict(start=a,end=b) for a,b in [(1.,3.),(5.0001,7.5)]]
+        self.assertEqual(cuts.merge_short_spans_across_blocks(rows,[],[[.8,1.],[3.,5.0001],[7.5,7.7]],[],8.),([],rows))
+        rows=[dict(start=a,end=b) for a,b in [(1.,4.),(4.3,7.3),(7.6,10.6),(10.9,13.9),(14.2,17.2),(17.5,20.5)]]
+        pauses=[[.8,1.],[4.,4.3],[7.3,7.6],[10.6,10.9],[13.9,14.2],[17.2,17.5],[20.5,20.7]]
+        clips,leftovers=cuts.merge_short_spans_across_blocks(rows,[],pauses,[],21.)
+        self.assertFalse(leftovers)
+        self.assertTrue(all(5<=c['end']-c['start']<=15 for c in clips))
+        self.assertTrue(all(a['end']<=b['start'] for a,b in zip(clips,clips[1:])))
+        self.assertEqual(sum(len(c['merged_unresolved_parts']) for c in clips),len(rows))
+
+    def test_global_neighbor_absorption_chooses_either_side(self):
+        def candidate(a,b):
+            return dict(start=a,end=b,left_padding=.15,right_padding=.15)
+        row=dict(start=11.,end=13.)
+        left=candidate(.5,10.5)
+        right=candidate(13.5,23.5)
+        pauses=[[.5,.65],[10.35,11.],[13.,13.65],[23.35,23.5]]
+        for candidates, evidence, expected in [
+                ([left,right],pauses,None),
+                ([left,right],[p for p in pauses if p[0]!=13.] + [[13.5,13.65]],right),
+                ([left,right],[p for p in pauses if p[0]!=10.35] + [[10.35,10.5]],left)]:
+            with self.subTest(expected=expected):
+                changed,remaining=cuts.absorb_short_neighbors([row],candidates,evidence,[],24.)
+                self.assertFalse(remaining)
+                self.assertEqual(len(changed),1)
+                base,plan=changed[0]
+                if expected is not None: self.assertIs(base,expected)
+                self.assertTrue(5<=plan['end']-plan['start']<=15)
+                self.assertLessEqual(plan['start'],row['start'])
+                self.assertGreaterEqual(plan['end'],row['end'])
+                self.assertEqual(plan['merged_unresolved_parts'],[row])
+                self.assertEqual(set(cuts.edge_pause_evidence(plan,evidence)),{'start','end'})
+
+    def test_global_neighbor_absorption_refuses_invalid_merges(self):
+        left=dict(start=.5,end=14.5,left_padding=.15,right_padding=.15)
+        right=dict(start=17.5,end=31.5,left_padding=.15,right_padding=.15)
+        row=dict(start=15.,end=17.)
+        pauses=[[.5,.65],[14.35,15.],[17.,17.65],[31.35,31.5]]
+        self.assertEqual(cuts.absorb_short_neighbors([row],[left,right],pauses,[],32.),([], [row]))
+        left=dict(start=4.5,end=14.5,left_padding=.15,right_padding=.15)
+        for evidence,regions in [(pauses+[[4.5,4.65]],[dict(start=14.5,end=15.,label='music')]),
+                                 ([[4.5,4.65],[14.35,15.]],[])]:
+            self.assertEqual(cuts.absorb_short_neighbors([row],[left],evidence,regions,32.),([], [row]))
+
+    def test_global_neighbor_absorption_both_ends(self):
+        base=dict(start=4.,end=13.,left_padding=.15,right_padding=.15)
+        rows=[dict(start=1.5,end=3.5),dict(start=13.5,end=15.5)]
+        pauses=[[1.3,1.5],[3.5,4.15],[12.85,13.5],[15.5,15.7]]
+        changed,leftovers=cuts.absorb_short_neighbors(rows,[base],pauses,[],20.)
+        self.assertFalse(leftovers)
+        self.assertEqual(len(changed),1)
+        self.assertEqual(changed[0][1]['merged_unresolved_parts'],rows)
+        self.assertAlmostEqual(changed[0][1]['end']-changed[0][1]['start'],14.3)
+
+    def test_global_neighbor_absorption_export(self):
+        phrases=[[1.,11.],[11.5,13.5],[14.,24.]]
+        self.wave(phrases,duration=25.)
+        regions=[dict(start=a,end=b,label=label) for a,b,label in [
+            (0.,1.,'silence'),(1.,11.,'speech'),(11.,11.5,'silence'),
+            (11.5,13.5,'speech'),(13.5,14.,'silence'),(14.,24.,'speech'),(24.,25.,'silence')]]
+        data,folder=self.export(cuts,phrases,regions=regions)
+        self.assertFalse(data['unresolved'])
+        self.assertEqual(len(data['segments']),2)
+        self.assertEqual(data['neighbor_absorption']['absorbed_unresolved_parts'],1)
+        clip=next(s for s in data['segments'] if s['kind']=='global_neighbor_absorption')
+        self.assertEqual(clip['absorbed_neighbor_parts'],[dict(start=11.5,end=13.5)])
+        self.assertTrue(5<=clip['duration']<=15)
+        source,_=sf.read(self.path,dtype='int16')
+        for c in data['segments']:
+            actual,_=sf.read(folder/c['file'],dtype='int16')
+            np.testing.assert_array_equal(actual,source[round(c['start']*RATE):round(c['end']*RATE)])
+            self.assertEqual(set(c['boundary_evidence']),{'start','end'})
+        self.assertLessEqual(data['segments'][0]['end'],data['segments'][1]['start'])
+        session=review.load_session(folder/'step4_segments.json',self.path)
+        self.assertEqual(len(session['segments']),2)
+        self.assertTrue(all(s['status']=='pending' for s in session['segments']))
+
     # Create a temporary location for this test's source recording.
     def setUp(self):
         self.tmp=tempfile.TemporaryDirectory();self.root=Path(self.tmp.name)
@@ -170,13 +447,20 @@ class PDFPart4(unittest.TestCase):
             actual,_=sf.read(folder/s['file'],dtype='int16')
             np.testing.assert_array_equal(actual,source[round(s['start']*RATE):round(s['end']*RATE)])
             self.assertTrue(5<=len(actual)/RATE<=15)
-            self.assertTrue(all(.1-1e-6<=s[k]<=.2+1e-6 for k in ('left_padding','right_padding')))
-            self.assertEqual(set(s['boundary_evidence']),{'start','end'})
+            if s.get('manual_boundary_review_required'):
+                self.assertEqual(s['status'],'needs_review')
+                for side,key in [('start','left_padding'),('end','right_padding')]:
+                    if side in s['boundary_evidence']:
+                        self.assertTrue(.1-1e-6<=s[key]<=.2+1e-6)
+                    else:self.assertEqual(s[key],0.)
+            else:
+                self.assertTrue(all(.1-1e-6<=s[k]<=.2+1e-6 for k in ('left_padding','right_padding')))
+                self.assertEqual(set(s['boundary_evidence']),{'start','end'})
             self.assertEqual(s['source_spans'],[dict(start=s['start'],end=s['end'],clip_start=0.,clip_end=s['duration'])])
             self.assertEqual(s['removed_gaps'],[])
             self.assertEqual(s['synthetic_silence_start_seconds'],0.)
         total=sum(s['duration'] for s in data['segments'])+sum(u['end']-u['start'] for u in data['unresolved'])+sum(g['end']-g['start'] for g in data['not_in_clips_or_unresolved'])
-        self.assertAlmostEqual(total,40.,places=5)
+        self.assertAlmostEqual(total,data['coverage_seconds']['eligible_step3']+data['coverage_seconds']['adjacent_silence_in_clips'],places=5)
         ordered=sorted(data['segments'],key=lambda s:s['start'])
         self.assertTrue(all(a['end']<=b['start']+1/RATE for a,b in zip(ordered,ordered[1:])))
     # Check that lecture clips include real quiet samples on both sides.
@@ -250,9 +534,15 @@ class PDFPart4(unittest.TestCase):
         # Music and a mislabeled audible word at a block edge cannot supply padding.
         regions[0]['label'] = 'music'
         self.wave(phrases + [[17.22,17.37]])
-        data,_ = self.export(cuts,phrases,regions=regions)
-        self.assertEqual(len(data['unresolved']),2)
-        self.assertFalse(data['segments'])
+        data,folder = self.export(cuts,phrases,regions=regions)
+        # V7 keeps these as length-valid proposals, not verified cuts.
+        self.assertFalse(data['unresolved'])
+        self.assertEqual(len(data['segments']),2)
+        self.assertTrue(all(c['manual_boundary_review_required'] for c in data['segments']))
+        self.assertGreaterEqual(data['segments'][0]['start'],1.)
+        self.assertEqual(data['segments'][0]['left_padding'],0.)
+        self.assertEqual(data['segments'][1]['right_padding'],0.)
+        self.assert_contract(data,folder)
 
     # The extra pause search should run on long spans and still need evidence from the source.
     def test_only_long_span_gets_second_pass_and_requires_quiet_source(self):

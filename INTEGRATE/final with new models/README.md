@@ -48,3 +48,7 @@ From the project folder, after installing dependencies, run these commands in Po
 The workflow check creates temporary audio and uses controlled recognizer outputs. The other `tests/check_*.py` scripts exercise individual UI and pipeline behaviors. The optional `check_cohere_sdk.py` downloads processor/configuration files and exercises the SDK with a tiny model.
 
 Keep the source, UI, runtime assets and test fixtures in Git. Use a destination outside the checkout for downloaded videos, model caches and generated project outputs.
+
+### Portable review HTML
+
+In Review and Export, choose **Save review table → HTML**. The report includes a player for every displayed segment or unresolved span. Its sibling `review_audio` directory (or a uniquely named `review_audio_*` directory on repeated saves) contains exact PCM copies of the reviewed audio. Keep the HTML and that directory together when moving or sharing the report. Paths are relative to the HTML file; no original source file or internet connection is needed for playback. CSV, JSON and Excel saves are unchanged.

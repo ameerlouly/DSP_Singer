@@ -164,8 +164,16 @@ class MixedContinuityTests(unittest.TestCase):
     def test_exporter_preserves_missed_audio_when_natural_edges_are_missing(self):
         with self.subTest(module=natural.__name__):
             data, output = self.export(natural, 12., [[2.,4.],[6.,8.]])
-            self.assertFalse(data['segments'])
-            self.assertEqual([(u['start'],u['end']) for u in data['unresolved']], [(0.,12.)])
+            self.assertFalse(data['unresolved'])
+            self.assertEqual(len(data['segments']),1)
+            clip=data['segments'][0]
+            self.assertEqual((clip['start'],clip['end']),(0.,12.))
+            self.assertTrue(clip['manual_boundary_review_required'])
+            self.assertEqual(clip['boundary_evidence'],{})
+            self.assertEqual((clip['left_padding'],clip['right_padding']),(0.,0.))
+            actual,_=sf.read(output/clip['file'],dtype='int16')
+            source,_=sf.read(self.path,dtype='int16')
+            np.testing.assert_array_equal(actual,source)
 
     # A sustained vocal line without a safe break should remain available for review.
     def test_long_vocals_not_forced_into_fake_natural_pauses(self):

@@ -10,6 +10,7 @@ import copy
 import json
 import math
 import tempfile
+import wave
 from contextlib import contextmanager
 from difflib import SequenceMatcher
 from datetime import datetime, timezone
@@ -126,7 +127,7 @@ class ProcessingWorkspace(QObject):
         self.canvas = FigureCanvasQTAgg(self.figure)
         self.canvas.setMinimumHeight(290)
         self.axes = self.figure.add_subplot(111)
-        self.axes.set_title('Choose a WAV and display its spectrogram', color='#173B40')
+        self.axes.set_title('Choose audio and display its spectrogram', color='#173B40')
         self.ui.plotLayout.addWidget(NavigationToolbar2QT(self.canvas, self.ui))
         self.ui.plotLayout.addWidget(self.canvas)
         self.canvas.mpl_connect('button_press_event', self.plot_press)
@@ -248,6 +249,7 @@ class ProcessingWorkspace(QObject):
         if hasattr(self,'asr'):
             if index == 5:
                 self.asr.flush_review_rows()
+                self.asr.refresh_summary()
                 if not self.asr.final_draft:
                     self.asr.select_final()
             elif index == 4 and not self.asr.transcript_draft:
@@ -394,8 +396,16 @@ class ProcessingWorkspace(QObject):
 
     # Get the editor name before the automatic sequence starts making review entries.
     def start_auto_process(self):
-        self.require_audio()
-        if self.task is not None or self.window.worker is not None:
+        video_text = self.window.videoPathInput.text().strip()
+        video = Path(video_text).resolve() if video_text else None
+        if video and not video.is_file():
+            raise ValueError('The selected recording could not be found. Choose the file again.')
+        download = not video and self.audio is None and bool(self.window.urlInput.text().strip())
+        if download and not self.window.outputFolderInput.text().strip():
+            raise ValueError('Choose a destination folder for the video first.')
+        if not video and not download:
+            self.require_audio()
+        if self.auto_stage or self.task is not None or self.window.worker is not None:
             raise ValueError('Wait for the current operation to finish.')
         if not self.confirm_discard():
             return
@@ -406,9 +416,17 @@ class ProcessingWorkspace(QObject):
         if not editor:
             raise ValueError('Enter an editor name to start Auto process.')
         self.ui.reviewer.setText(editor)
-        self.auto_stage = 'label'
         try:
-            self.analyze(confirmed=True, approval_editor=editor)
+            if download:
+                self.auto_stage = 'download'
+                self.window.start_operation('download', automatic=True)
+            elif video and not (self.audio and self.audio.is_file() and
+                                self.window.extracted_pair == (video, video.stat().st_mtime_ns, self.audio)):
+                self.auto_stage = 'extract'
+                self.window.start_operation('extract', automatic=True)
+            else:
+                self.auto_stage = 'label'
+                self.analyze(confirmed=True, approval_editor=editor)
         except Exception:
             self.auto_stage = None
             raise
@@ -416,7 +434,13 @@ class ProcessingWorkspace(QObject):
     # Start the next stage only after the previous one has delivered its data.
     def advance_auto_process(self):
         try:
-            if self.auto_stage == 'label':
+            if self.auto_stage == 'download':
+                self.auto_stage = 'extract'
+                self.window.start_operation('extract', automatic=True)
+            elif self.auto_stage == 'extract':
+                self.auto_stage = 'label'
+                self.analyze(confirmed=True, approval_editor=self.reviewer())
+            elif self.auto_stage == 'label':
                 self.auto_stage = 'segments'
                 self.generate_segments(output_folder=self.source_folder(), confirmed=True)
             elif self.auto_stage == 'segments':
@@ -424,11 +448,15 @@ class ProcessingWorkspace(QObject):
                 self.auto_stage = 'snr'
                 self.calculate_snr()
             elif self.auto_stage == 'snr':
+                self.auto_stage = 'save_snr'
+                self.save_snr(automatic=True)
+            elif self.auto_stage == 'save_snr':
                 self.auto_stage = 'sync'
                 self.asr.sync_current()
             elif self.auto_stage == 'sync':
                 self.auto_stage = 'asr'
-                if self.asr.records:
+                from corpus_review_and_export import can_transcribe
+                if any(can_transcribe(record) for record in self.asr.records):
                     self.asr.transcribe(False)
                 if self.task is None:
                     self.advance_auto_process()
@@ -469,13 +497,24 @@ class ProcessingWorkspace(QObject):
     # Catch a missing or moved WAV before starting work on it.
     def require_audio(self):
         if self.audio is None or not self.audio.is_file():
-            raise ValueError('Choose a WAV or extract audio on Source & Audio first.')
+            raise ValueError('Choose an MP3 or WAV, or extract audio on Source & Audio first.')
 
-    # Ask the user which WAV contains the original recording.
+    # Open a ready-to-use WAV directly so saved reviews still point to the same file.
     def choose_audio(self):
-        path, _ = QFileDialog.getOpenFileName(self.window, 'Choose original WAV', '', 'Audio WAV (*.wav)')
-        if path:
-            self.set_audio(path)
+        path, _ = QFileDialog.getOpenFileName(
+            self.window, 'Choose an audio recording', '', 'Audio files (*.mp3 *.wav)')
+        if not path:
+            return
+        if Path(path).suffix.lower() == '.wav':
+            try:
+                review.inspect_wav(path)
+            except (ValueError, wave.Error, EOFError):
+                pass  # FFmpeg can read other WAV encodings, including floating-point PCM.
+            else:
+                if self.set_audio(path):
+                    self.window.videoPathInput.clear()
+                return
+        self.window.start_operation('extract', audio_source=path)
 
     # Switch to the chosen recording and clear results tied to the previous one.
     def set_audio(self, path, ask=True):
@@ -1322,6 +1361,13 @@ class ProcessingWorkspace(QObject):
     def approve(self):
         if not self.session:raise ValueError('Generate or open candidates first.')
         rows=self.selected(self.ui.segmentTable)
+        if len(rows)>1 and any((self.session['segments'][i].get('original') or {}).get('manual_boundary_review_required') for i in rows):
+            raise ValueError('Listen to each boundary-review candidate and approve it individually.')
+        if len(rows)==1 and (self.session['segments'][rows[0]].get('original') or {}).get('manual_boundary_review_required'):
+            answer=QMessageBox.question(self.window,'Confirm clip boundaries',
+                'Have you listened to this clip and confirmed complete words and 0.1–0.2 seconds of natural pause at BOTH ends? Adjust the source bounds first if needed.',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,QMessageBox.StandardButton.No)
+            if answer!=QMessageBox.StandardButton.Yes:return
         count=review.approve_segments(self.session,rows,self.reviewer())
         self.modified_session(rows);self.status(f'{count} clips approved. Export or calculate SNR when ready.')
 
@@ -1329,13 +1375,13 @@ class ProcessingWorkspace(QObject):
     def approve_all(self):
         if not self.session:
             raise ValueError('Generate or open candidates first.')
-        rows = [i for i,item in enumerate(self.session['segments']) if item['status'] == 'pending']
+        rows = [i for i,item in enumerate(self.session['segments']) if item['status'] == 'pending' and not (item.get('original') or {}).get('manual_boundary_review_required')]
         if not rows:
-            self.status('There are no pending candidates to approve.')
+            self.status('No ordinary pending candidates to batch approve. Boundary-review candidates must be checked and approved individually.')
             return
         count = review.approve_segments(self.session, rows, self.reviewer())
         self.modified_session(rows)
-        self.status(f'{count} pending candidates approved.')
+        self.status(f'{count} pending candidates approved. Boundary-review candidates require individual approval.')
 
     # Set whether this unresolved interval goes on to recognition.
     def toggle_span_asr(self):
@@ -1529,19 +1575,25 @@ class ProcessingWorkspace(QObject):
         self.dirty=True;self.status('Quality corrections recorded. Save the session or updated report.')
 
     # Save the SNR results together with the reason for the selected threshold.
-    def save_snr(self):
+    def save_snr(self, *, automatic=False):
         self.check_snr()
         self.snr_controls_changed()
-        if not self.snr_justification:raise ValueError('Enter a threshold justification before saving the SNR report.')
-        folder=QFileDialog.getExistingDirectory(self.window,'Save SNR HTML / CSV / JSON',str(self.source_folder()))
-        if not folder:return
+        folder = self.source_folder()
+        if not automatic:
+            if not self.snr_justification:
+                raise ValueError('Enter a threshold justification before saving the SNR report.')
+            folder = QFileDialog.getExistingDirectory(self.window, 'Save SNR HTML / CSV / JSON', str(folder))
+            if not folder:
+                return
         folder = str(step_folder(folder, 'Audio quality SNR'))
         records,threshold,policy,reason=self.snr_results,self.applied_threshold,self.snr_policy,self.snr_justification
         # Remember which HTML report the Open report button should use.
         def done(paths):
             self.snr_report=Path(paths[0])
-            self.status('Saved SNR reports: '+str(self.snr_report))
-        self.start('Saving SNR reports…',lambda log:snr.export_report(records,threshold,folder,policy=policy,justification=reason),done)
+            self.window.append_log(f'Saved SNR reports: {self.snr_report}')
+            self.status(f'Saved SNR reports: {self.snr_report}')
+        self.start('Saving SNR reports…', lambda log: snr.export_report(
+            records, threshold, folder, policy=policy, justification=reason, provisional=automatic), done)
 
     # Open the saved quality report for this session.
     def open_snr_report(self):

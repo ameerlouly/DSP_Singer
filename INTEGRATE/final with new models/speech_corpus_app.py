@@ -77,6 +77,7 @@ class MainWindow(QMainWindow):
         self.download_target = 0
         self.worker = None
         self.last_result = None
+        self.extracted_pair = None
         self.report_path = None
         self.started = None
         self.failed_operation = False
@@ -111,7 +112,7 @@ class MainWindow(QMainWindow):
         self.downloadProgressBar.valueChanged.connect(self.progressBar.setValue)
         self.openReportButton.setEnabled(False)
         self.openOutputFolderButton.setEnabled(False)
-        self.append_log('Ready. Download a video or choose a local video for audio extraction.')
+        self.append_log('Ready. Download a video or choose a local MP3, WAV or video file.')
         from audio_review_controller import ProcessingWorkspace
         self.processing = ProcessingWorkspace(self)
 
@@ -134,11 +135,12 @@ class MainWindow(QMainWindow):
         if chosen:
             self.outputFolderInput.setText(chosen)
 
-    # Choose a video already on disk for audio extraction.
+    # Select the local recording that will supply the audio track.
     def choose_video(self):
         chosen, _ = QFileDialog.getOpenFileName(
-            self, 'Choose a video', str(self.project_folder),
-            'Video files (*.mp4 *.mkv *.webm *.mov *.avi *.m4v *.ts *.flv);;All files (*)',
+            self, 'Choose audio or video', str(self.project_folder),
+            'Audio and video (*.mp3 *.wav *.mp4 *.mkv *.webm *.mov *.avi *.m4v *.ts *.flv);;'
+            'Audio files (*.mp3 *.wav);;Video files (*.mp4 *.mkv *.webm *.mov *.avi *.m4v *.ts *.flv);;All files (*)',
         )
         if chosen:
             self.videoPathInput.setText(chosen)
@@ -158,10 +160,12 @@ class MainWindow(QMainWindow):
             self.audioFormatLabel.setText('Custom WAV export. For Regions, select 16000 Hz, mono, 16-bit.')
 
     # Gather the current source settings before handing the operation to the worker.
-    def start_operation(self, operation):
+    def start_operation(self, operation, *, automatic=False, audio_source=None):
         if self.worker is not None or self.processing.task is not None:
             return
         value = self.urlInput.text().strip() if operation == 'download' else self.videoPathInput.text().strip()
+        if audio_source is not None:
+            value = str(audio_source)
         output_folder = self.outputFolderInput.text().strip()
         if operation == 'download' and not output_folder:
             QMessageBox.warning(self, 'Destination required',
@@ -169,11 +173,11 @@ class MainWindow(QMainWindow):
             self.outputFolderInput.setFocus()
             return
         if not value:
-            message = 'Enter a video URL.' if operation == 'download' else 'Choose a local video.'
+            message = 'Enter a video URL.' if operation == 'download' else 'Choose a local audio or video file.'
             QMessageBox.information(self, 'Missing input', message)
             return
-        wav_format = self.extraction_format()
-        if operation == 'extract' and wav_format == CORPUS_FORMAT and not self.processing.confirm_discard():
+        wav_format = CORPUS_FORMAT if automatic or audio_source is not None else self.extraction_format()
+        if operation == 'extract' and wav_format == CORPUS_FORMAT and not automatic and not self.processing.confirm_discard():
             return
         self.failed_operation = False
         self.active_operation = operation
@@ -295,10 +299,17 @@ class MainWindow(QMainWindow):
             self.report_path = self.last_result.with_suffix('.html')
             self.statusLabel.setText('Audio extracted and verified')
             if self.worker.wav_format == CORPUS_FORMAT:
-                self.processing.set_audio(path, ask=False)
+                try:
+                    self.processing.set_audio(path, ask=False)
+                    source = Path(self.worker.value).resolve()
+                    self.extracted_pair = (source, source.stat().st_mtime_ns, self.processing.audio)
+                    self.videoPathInput.setText(str(source))
+                except (OSError, ValueError) as error:
+                    self.operation_failed(str(error))
+                    return
             else:
                 self.statusLabel.setText('Custom WAV exported and verified')
-                self.append_log('Custom export saved. To use this video in Regions, extract it with the corpus settings.')
+                self.append_log('Custom export saved. To use this recording in Regions, extract it with the corpus settings.')
         self.show_source_details(metadata_folder(project_folder(self.last_result.parent)))
         self.append_log(f'Completed: {path}')
 
@@ -330,6 +341,12 @@ class MainWindow(QMainWindow):
         self.openOutputFolderButton.setEnabled(bool(self.last_result and self.last_result.parent.is_dir()))
         self.worker = None
         self.active_operation = None
+        # The processing worker can take over once the source worker has released the file.
+        if self.processing.auto_stage in ('download', 'extract'):
+            if self.failed_operation:
+                self.processing.auto_stage = None
+            else:
+                self.processing.advance_auto_process()
 
     # Show the time spent on the current download or extraction.
     def update_elapsed(self):

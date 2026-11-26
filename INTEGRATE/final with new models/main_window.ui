@@ -587,7 +587,7 @@ QPushButton#backToWelcomeButton:focus {border:2px solid #E2FFF9; padding:7px 13p
                                   <item>
                                     <widget class="QLabel" name="wavLabel">
                                       <property name="text">
-                                        <string>Audio WAV</string>
+                                        <string>Working WAV</string>
                                       </property>
                                       <property name="wordWrap">
                                         <bool>true</bool>
@@ -597,7 +597,7 @@ QPushButton#backToWelcomeButton:focus {border:2px solid #E2FFF9; padding:7px 13p
                                   <item>
                                     <widget class="QLineEdit" name="wavPath">
                                       <property name="placeholderText">
-                                        <string>Choose a 16 kHz, mono, 16-bit PCM WAV</string>
+                                        <string>Choose an MP3 or WAV recording</string>
                                       </property>
                                     </widget>
                                   </item>
@@ -611,7 +611,7 @@ QPushButton#chooseWav:focus {border:2px solid #173B40; padding:7px 13px;}
 QPushButton#chooseWav:disabled {background:#E3E9EB; color:#61777C; border:1px solid #CDD9DC;}</string>
                                       </property>
                                       <property name="text">
-                                        <string>Browse WAV</string>
+                                        <string>Browse audio</string>
                                       </property>
                                     </widget>
                                   </item>
@@ -730,7 +730,7 @@ QPushButton#openProject:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                       <string>color:#60767A;</string>
                                     </property>
                                     <property name="text">
-                                      <string>Download a video and prepare its audio.</string>
+                                      <string>Download a video or import a local audio recording.</string>
                                     </property>
                                     <property name="wordWrap">
                                       <bool>true</bool>
@@ -1038,7 +1038,7 @@ QProgressBar#downloadProgressBar::chunk {
                                               <item>
                                                 <widget class="QLabel" name="videoPathLabel">
                                                   <property name="text">
-                                                    <string>Selected video</string>
+                                                    <string>Selected source file</string>
                                                   </property>
                                                   <property name="wordWrap">
                                                     <bool>true</bool>
@@ -1074,7 +1074,7 @@ QProgressBar#downloadProgressBar::chunk {
                                                         <string/>
                                                       </property>
                                                       <property name="placeholderText">
-                                                        <string>Select or download a video</string>
+                                                        <string>Select an MP3, WAV or video file</string>
                                                       </property>
                                                       <property name="clearButtonEnabled">
                                                         <bool>true</bool>
@@ -1097,7 +1097,7 @@ QPushButton#chooseVideoButton:focus {border:2px solid #335D87; padding:7px 13px;
 QPushButton#chooseVideoButton:disabled {background:#EDF1F2; color:#87999D; border:1px solid #D8E1E3;}</string>
                                                       </property>
                                                       <property name="text">
-                                                        <string>Choose video</string>
+                                                        <string>Choose file</string>
                                                       </property>
                                                     </widget>
                                                   </item>
@@ -1188,7 +1188,7 @@ QPushButton#chooseVideoButton:disabled {background:#EDF1F2; color:#87999D; borde
                                                     <widget class="QPushButton" name="autoProcessButton">
                                                       <property name="minimumSize"><size><width>120</width><height>38</height></size></property>
                                                       <property name="text"><string>Auto process</string></property>
-                                                      <property name="toolTip"><string>Label regions, generate candidates, calculate SNR and run both recognizers. Review transcript disagreements on the Transcription page.</string></property>
+                                                      <property name="toolTip"><string>Extract corpus audio from the selected MP3, WAV or video, or use the loaded WAV. Label regions, generate segments, save SNR reports and transcribe all eligible clips with both models.</string></property>
                                                       <property name="styleSheet"><string>QPushButton#autoProcessButton {background:#2563EB;color:#FFFFFF;border:0;border-radius:6px;padding:8px 14px;font-weight:600;} QPushButton#autoProcessButton:hover {background:#2159D4;} QPushButton#autoProcessButton:disabled {background:#EDF1F2;color:#87999D;}</string></property>
                                                     </widget>
                                                   </item>
@@ -1733,13 +1733,13 @@ QPushButton#saveRegions:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                       <item>
                                         <widget class="QLineEdit" name="pannsHopInput">
                                           <property name="placeholderText">
-                                            <string>Default: 2.0</string>
+                                            <string>Half the window</string>
                                           </property>
                                           <property name="clearButtonEnabled">
                                             <bool>true</bool>
                                           </property>
                                           <property name="toolTip">
-                                            <string>Time advanced between predictions. Range: 0.1 seconds to the window length. Leave empty for 2 seconds.</string>
+                                            <string>Time advanced between predictions. Range: 0.1 seconds to the window length. Leave empty to advance by half the window.</string>
                                           </property>
                                           <property name="accessibleName">
                                             <string>Hop (s)</string>
@@ -1755,7 +1755,7 @@ QPushButton#saveRegions:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                       <item>
                                         <widget class="QLabel" name="pannsSettingsHint">
                                           <property name="text">
-                                            <string>Blank = 2 s each. Hop must be ≤ window.</string>
+                                            <string>Default window 2 s · Default hop ½ window.</string>
                                           </property>
                                           <property name="wordWrap">
                                             <bool>true</bool>
@@ -3538,7 +3538,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                 <item>
                                   <widget class="QLabel" name="asrIntro">
                                     <property name="text">
-                                      <string>Both models transcribe approved speech/mixed clips and unresolved spans that may contain speech. The Segmentation column tracks boundary approval separately from transcript agreement. Two nonempty transcripts with normalized CER ≤ 2% are accepted. Otherwise, listen and choose or edit within the word limit. More edits mark the transcript difficult. The limit is 3 edits, plus 1 for every full 5 seconds beyond 15 seconds on unresolved spans. Model agreement is not verified transcription accuracy.</string>
+                                      <string>Both models transcribe approved speech/mixed clips and unresolved spans that may contain speech. The Segmentation column tracks boundary approval separately from transcript agreement. When both transcripts contain text and normalized CER is at most 4%, Cohere supplies the final text. Otherwise, listen and choose or edit within the word limit. More edits mark the transcript difficult. The limit is 4 edits, plus 1 for every full 5 seconds beyond 15 seconds on unresolved spans. Model agreement is not verified transcription accuracy.</string>
                                     </property>
                                     <property name="wordWrap">
                                       <bool>true</bool>
@@ -4567,7 +4567,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                   <item>
                                     <widget class="QLabel" name="processingStatus">
                                       <property name="text">
-                                        <string>Choose a WAV or extract audio on Source &amp; Audio.</string>
+                                        <string>Choose an MP3 or WAV, or extract audio on Source &amp; Audio.</string>
                                       </property>
                                       <property name="wordWrap">
                                         <bool>true</bool>

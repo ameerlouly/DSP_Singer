@@ -53,7 +53,7 @@ def analysis_settings(window_seconds=None, hop_seconds=None):
             raise ValueError(f'{name} must be a finite number in seconds.')
         return value
     window = number(window_seconds, WINDOW_SECONDS, 'Window length')
-    hop = number(hop_seconds, HOP_SECONDS, 'Hop length')
+    hop = number(hop_seconds,  window * 0.5, 'Hop length')
     if not MIN_WINDOW_SECONDS <= window <= MAX_WINDOW_SECONDS:
         raise ValueError(f'Window length must be between {MIN_WINDOW_SECONDS:g} and {MAX_WINDOW_SECONDS:g} seconds.')
     if not MIN_HOP_SECONDS <= hop <= MAX_WINDOW_SECONDS:

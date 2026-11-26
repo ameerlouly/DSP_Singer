@@ -12,8 +12,8 @@ The GUI shows two directional character error rates. Qwen's score compares Qwen 
 
 | Status | Rule |
 |---|---|
-| Accepted | Both comparison texts contain content and are identical or the CER using Qwen as reference is at most 2%. The raw Cohere transcript becomes the automatic final text. |
+| Accepted | Both comparison texts contain content and are identical or the CER using Qwen as reference is at most 4%. The raw Cohere transcript becomes the automatic final text. |
 | Needs review | The acceptance rule did not pass, and substitutions, insertions and deletions together fit the word-edit limit. Listen, select a model or edit the transcript. |
 | Difficult | The word-edit count exceeds the review limit. A reviewer can revisit the decision after listening. |
 
-The base limit is three word edits. For unresolved spans longer than 15 seconds, each additional complete five seconds adds one edit. A 25-second unresolved span therefore has a limit of five. Empty outputs cannot be accepted automatically.
+The base limit is four word edits. For unresolved spans longer than 15 seconds, each additional complete five seconds adds one edit. A 25-second unresolved span therefore has a limit of six. Empty outputs cannot be accepted automatically.

@@ -1,4 +1,4 @@
-"""Get a source video onto disk and extract its audio.
+"""Download a video or convert a local recording to WAV.
 
 download_video saves the media and available source metadata. DownloadProgress follows
 the video and audio streams through postprocessing. extract_audio passes the selected
@@ -847,7 +847,7 @@ def extract_audio(video_path, log=print, *, wav_format=CORPUS_FORMAT):
     require_tools()
     video = Path(video_path).resolve()
     if not video.is_file():
-        raise ValueError('Select an existing video file first.')
+        raise ValueError('Select an existing audio or video file first.')
     source = probe(video)
     audio = next((s for s in source.get('streams', []) if s.get('codec_type') == 'audio'), None)
     if audio is None:
@@ -899,7 +899,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument('--url', help='Download a video and extract its audio')
-    group.add_argument('--video', help='Extract audio from an existing local video')
+    group.add_argument('--video', '--media', help='Extract WAV audio from a local MP3, WAV or video file')
     group.add_argument('--verify-license', metavar='FOLDER',
                        help='Record a manually checked license for an existing download folder')
     parser.add_argument('--output', default='data', help='Download folder')

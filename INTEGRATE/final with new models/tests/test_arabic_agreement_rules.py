@@ -58,10 +58,15 @@ class PDFAgreementTests(unittest.TestCase):
         self.assertEqual((r['automatic_status'],r['cer'],r['wer'],r['word_difference']),('accepted',0.,0.,0))
         self.assertEqual(r['comparison_engine'],'jiwer')
 
-    # Try both sides of the two-percent character-error cutoff.
-    def test_two_percent_boundary(self):
-        self.assertEqual(asr.compare_transcripts('ا'*50,'ا'*49+'ب')[0],'accepted')
-        self.assertEqual(asr.compare_transcripts('ا'*49,'ا'*48+'ب')[0],'needs_review')
+    # Try both sides of the four-percent character-error cutoff.
+    def test_four_percent_boundary(self):
+        for length, expected in [(26, 'accepted'), (25, 'accepted'), (24, 'needs_review')]:
+            with self.subTest(reference_length=length):
+                cohere = 'ا' * (length - 1) + 'ب'
+                result = asr.comparison_details('ا' * length, cohere)
+                self.assertEqual(result['automatic_status'], expected)
+                self.assertEqual(result['automatic_transcript'], cohere if expected == 'accepted' else '')
+        self.assertEqual(asr.comparison_policy()['maximum_accepted_cer'], .04)
 
     # Swap the reference text and check the denominator for each displayed CER.
     def test_each_model_cer_uses_the_other_normalized_text(self):
@@ -74,9 +79,9 @@ class PDFAgreementTests(unittest.TestCase):
 
     # A difference in transcript length alone should never choose the winning text.
     def test_lower_directional_cer_is_not_used_to_pick_a_winner(self):
-        r=asr.comparison_details('ا'*49,'ا'*50)
-        self.assertEqual(r['cer_a_vs_b'],.02)
-        self.assertGreater(r['cer_b_vs_a'],.02)
+        r=asr.comparison_details('ا'*24,'ا'*25)
+        self.assertEqual(r['cer_a_vs_b'],.04)
+        self.assertGreater(r['cer_b_vs_a'],.04)
         self.assertEqual(r['automatic_status'],'needs_review')
         self.assertIsNone(r['automatic_choice'])
         self.assertEqual(r['automatic_transcript'],'')
@@ -99,14 +104,14 @@ class PDFAgreementTests(unittest.TestCase):
         self.assertIsNone(r['cer_b_vs_a'])
         self.assertIsNone(r['automatic_choice'])
 
-    # Three edits leave the clip for a listener. The fourth puts it in the difficult group.
-    def test_three_word_edits_require_human_choice_four_are_difficult(self):
-        reference='واحد اتنين تلاته اربعه'
-        three=asr.comparison_details(reference,'خمسه سته سبعه اربعه')
-        four=asr.comparison_details(reference,'خمسه سته سبعه تمانيه')
-        self.assertEqual((three['automatic_status'],three['word_difference']),('needs_review',3))
-        self.assertEqual((four['automatic_status'],four['word_difference']),('difficult',4))
-        self.assertEqual(four['word_substitutions'],4)
+    # Four word changes still leave a choice for the listener. Five mark the clip difficult.
+    def test_four_word_edits_require_human_choice_five_are_difficult(self):
+        reference = 'واحد اتنين تلاته اربعه خمسه'
+        for last, expected, count in [('خمسه', 'needs_review', 4), ('تسعه', 'difficult', 5)]:
+            result = asr.comparison_details(reference, 'سته سبعه تمانيه عشره ' + last)
+            self.assertEqual((result['automatic_status'], result['word_substitutions']), (expected, count))
+            self.assertIsNone(result['automatic_choice'])
+            self.assertEqual(result['automatic_transcript'], '')
 
     # Count added and missing words as well as substitutions.
     def test_insertions_and_deletions_are_counted_too(self):
@@ -157,17 +162,17 @@ class ReviewAndExportTests(unittest.TestCase):
     # Check where the allowance changes as an unresolved clip gets longer.
     def test_unresolved_word_budget_uses_full_source_seconds_only(self):
         r=self.record()
-        r.update(source_mode='unresolved_preview',start=42.,transcript_a='واحد اثنين ثلاثة أربعة',
-                 transcript_b='خمسة ستة سبعة ثمانية')
-        for duration,limit in [(5,3),(15,3),(20-1/16000,3),(20,4),(22,4),(25,5),(30,6)]:
+        r.update(source_mode='unresolved_preview',start=42.,transcript_a='واحد اثنين ثلاثة أربعة تسعة',
+                 transcript_b='خمسة ستة سبعة ثمانية عشرة')
+        for duration,limit in [(5,4),(15,4),(20-1/16000,4),(20,5),(22,5),(25,6),(30,7)]:
             with self.subTest(duration=duration):
                 r['end']=r['start']+duration
                 corpus.compare(r)
-                self.assertEqual((r['review_word_edit_limit'],r['word_difference']),(limit,4))
-                self.assertEqual(r['status'],'difficult' if limit<4 else 'needs_review')
+                self.assertEqual((r['review_word_edit_limit'],r['word_difference']),(limit,5))
+                self.assertEqual(r['status'],'difficult' if limit<5 else 'needs_review')
         r.update(source_mode='continuous_source')
         corpus.compare(r)
-        self.assertEqual((r['status'],r['review_word_edit_limit']),('difficult',3))
+        self.assertEqual((r['status'],r['review_word_edit_limit']),('difficult',4))
         r.update(source_mode='unresolved_preview',transcript_b=r['transcript_a'],human_override=True,
                  status='difficult',final_transcript='قرار المراجع')
         corpus.compare(r)
