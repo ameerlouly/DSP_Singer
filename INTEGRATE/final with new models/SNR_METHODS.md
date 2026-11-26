@@ -26,13 +26,13 @@ Use the original CMU alpha=0.4 lookup table, not the energy estimator. The assum
 
 ## Decision and review
 
-The default rule selects the lower valid estimate. Alternative GUI rules select pause energy or WADA specifically. A selected unavailable/range-limited method stays unavailable; the application does not silently substitute another method in a specifically selected rule. A single valid method under the default rule remains flagged for review.
+The default rule selects the lower valid estimate. Alternative GUI rules select pause energy or WADA specifically. A selected unavailable/range-limited method stays unavailable; the application does not silently substitute another method in a specifically selected rule. A single valid method under the default rule retains an informational warning.
 
 The user-adjustable clean/noisy threshold is initially 20 dB. It does **not** track instantaneous loudness. Threshold/rule changes reuse both saved estimates and preserve named human quality corrections. Recalculating identical samples also preserves corrections using the audio hash. Changed clips invalidate their old SNR.
 
-Review is flagged for method disagreement, a difference above 6 dB, unavailable/range-limited estimates, fallback noise estimation, noise variation above 6 dB, weak energy contrast, clipping and music/mixed content. The 6 dB checks are review heuristics, not assignment-mandated values or confidence probabilities. Mark clean/noisy with a reviewer and reason, or restore automatic. The automatic decision and the correction audit remain separate.
+Informational notes are recorded for method disagreement, a difference above 6 dB, unavailable/range-limited estimates, fallback noise estimation, noise variation above 6 dB, weak energy contrast, clipping and music/mixed content. The 6 dB checks are warning heuristics, not assignment-mandated values or confidence probabilities. Mark clean/noisy with a reviewer and reason, or restore automatic. The automatic decision and the correction audit remain separate.
 
-Report saving requires a written threshold justification based on listening/evaluation. A nonempty explanation is not itself calibration: the team must perform the PDF's real-video evaluation. Both values, decision rule, threshold, justification, noise evidence and human decisions persist in session/report files and the final corpus CSV/JSON. Full corpus export blocks missing/stale SNR, unresolved quality-review flags, an unavailable decision SNR or a missing justification; explicit partial export retains pending state.
+Quality approval and threshold-justification entry are optional for saving/export. The team must still justify its final threshold based on real-video evaluation for the assignment; an omitted explanation is recorded as missing. Both values, decision rule, threshold, justification, noise evidence and human decisions persist in session/report files and the final corpus CSV/JSON. Full corpus export blocks missing/stale SNR or an unavailable decision SNR, but not estimator warnings or missing justification. Explicit partial export retains incomplete measurements.
 
 Legacy energy-only reports remain readable and visibly marked for recalculation; reopening them does not manufacture WADA results.
 

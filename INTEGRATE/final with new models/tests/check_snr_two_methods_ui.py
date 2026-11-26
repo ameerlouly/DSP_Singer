@@ -32,7 +32,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  path=root/'step4_segments.json';path.write_text(json.dumps(metadata))
  p.set_session(review.load_session(path,source));review.approve_segments(p.session,[0],'Quality reviewer');p.refresh_all()
  w.navigationList.setCurrentRow(3)
- assert w.snrTable.columnCount()==13 and w.snrPolicy.count()==3
+ assert w.snrTable.columnCount()==12 and w.snrPolicy.count()==3
  rationale='20 dB starts from the project requirement; reviewed samples will justify the final threshold.'
  w.snrJustification.setText(rationale);w.calculateSNR.click();wait()
  assert len(p.snr_results)==1
@@ -40,7 +40,7 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  assert r['energy_details']['noise_frames']>=10
  assert w.snrTable.item(0,6).text()!='Unavailable' and w.snrTable.item(0,5).text()!='Unavailable'
  w.snrTable.selectRow(0);w.overrideReason.setText('Listened: acceptable speech quality for this test.');w.markClean.click()
- assert p.snr_results[0]['quality']=='clean' and p.snr_results[0]['review_status']=='Human reviewed'
+ assert p.snr_results[0]['quality']=='clean' and p.snr_results[0]['review_status']=='Manually corrected'
  measurements=(p.snr_results[0]['energy_snr_db'],p.snr_results[0]['wada_snr_db'])
  with patch.object(snr,'calculate',side_effect=AssertionError('Threshold change must not re-read/re-estimate audio')):
   w.snrThreshold.setValue(30.);w.snrPolicy.setCurrentIndex(2)

@@ -35,7 +35,7 @@ def estimate_wada(samples,rate=16000):
     return result['value_db'],'; '.join(result['notes'])
 
 
-# Apply the selected threshold and decide which results need a listener.
+# Apply the selected threshold; warnings are informational, not approval gates.
 def decision(item,threshold=20.,policy='conservative',justification=''):
     threshold=float(threshold)
     if not math.isfinite(threshold) or not -50<=threshold<=100:raise ValueError('Threshold must be finite and between -50 and 100 dB.')
@@ -71,10 +71,10 @@ def decision(item,threshold=20.,policy='conservative',justification=''):
     manual=bool(item.get('override_by'))
     item.update(threshold_db=threshold,threshold_justification=str(justification).strip(),decision_policy=policy,
         snr_db=selected,energy_quality=energy_label,wada_quality=wada_label,method_difference_db=difference,
-        automatic_quality=auto,automatic_review_required=bool(reasons),review_reasons=reasons)
+        automatic_quality=auto,automatic_review_required=False,quality_warning=bool(reasons),review_reasons=reasons)
     if not manual:item['quality']=auto
-    item['review_required']=bool(reasons) and not manual
-    item['review_status']='Human reviewed' if manual else 'Review needed' if reasons else 'Methods agree'
+    item['review_required']=False
+    item['review_status']='Manually corrected' if manual else 'Automatic (see notes)' if reasons else 'Automatic'
     notes=list(reasons)+list(e.get('notes',[]))+list((item.get('wada_details') or {}).get('notes',[]))
     item['note']='; '.join(dict.fromkeys(notes))
     return item
@@ -210,19 +210,41 @@ def set_quality(item,label,who,reason):
     return item
 
 
+def quality_status(item):
+    """Display provenance without requiring an approval, including legacy rows."""
+    if not item:return 'Not calculated'
+    if item.get('override_by'):return 'Manually corrected'
+    return 'Automatic (see notes)' if item.get('review_reasons') or item.get('quality_warning') else 'Automatic'
+
+
+def optional_quality_record(record):
+    """Migrate saved ASR quality metadata without changing scores or labels."""
+    analysis=record.get('snr_analysis')
+    if isinstance(analysis,dict) and analysis:
+        analysis=dict(analysis)
+        analysis.update(review_required=False,automatic_review_required=False,
+                        quality_warning=bool(analysis.get('review_reasons') or analysis.get('quality_warning')),
+                        review_status=quality_status(analysis))
+        record['snr_analysis']=analysis
+        record['snr_review_status']=analysis['review_status']
+    else:
+        record['snr_review_status']='Not calculated' if record.get('snr_db') is None else ('Manually corrected' if record.get('snr_override_by') else 'Automatic')
+    record['snr_review_required']=False
+    return record
+
+
 def corpus_fields(item):
     """Preserve both measurements and review provenance alongside transcripts."""
     return dict(snr_db=item.get('snr_db'),energy_snr_db=item.get('energy_snr_db'),wada_snr_db=item.get('wada_snr_db'),
         snr_threshold_db=item.get('threshold_db',20),snr_decision_policy=item.get('decision_policy','conservative'),
         snr_threshold_justification=item.get('threshold_justification',''),
-        snr_review_required=item.get('review_required',True),snr_review_status=item.get('review_status','Not calculated'),
+        snr_review_required=False,snr_review_status=quality_status(item),
         snr_note=item.get('note',''),snr_analysis=copy.deepcopy(item),clean_noisy=item.get('quality','unavailable'))
 
 
 # Save both scores and the reason the reviewer chose this threshold.
 def export_report(records,threshold,directory,*,policy='conservative',justification='',provisional=False):
-    # Auto saves the measurements even when the reviewer still needs to justify the threshold.
-    if not provisional and not justification.strip():raise ValueError('Enter the final threshold justification before saving the SNR report.')
+    # Saving is permitted before calibration; never invent a justification.
     records=reclassify(records,threshold,policy,justification)
     for row in records:row.setdefault('segmentation_status','resolved')
     base=new_run_folder(directory) / 'step5_snr'
@@ -230,7 +252,8 @@ def export_report(records,threshold,directory,*,policy='conservative',justificat
     payload=dict(format='speech_corpus_snr_v2',created_utc=datetime.now(timezone.utc).isoformat(),threshold_db=float(threshold),
         threshold_justification=justification.strip(),decision_policy=policy,methods=list(METHODS) if complete else ['legacy_energy_only'],
         second_method='wada_snr' if complete else 'not_calculated_for_legacy_data',
-        assumptions='Blind SNR estimates, not clean-reference measurements. Music, changing noise, clipped audio and estimator disagreement need listening review.',segments=records)
+        threshold_justification_provided=bool(justification.strip()),
+        assumptions='Blind SNR estimates, not clean-reference measurements. Music, changing noise, clipped audio and estimator disagreement are informational caveats; listening and correction are optional in the app.',segments=records)
     base.with_suffix('.json').write_text(json.dumps(payload,indent=2,ensure_ascii=False,allow_nan=False),encoding='utf-8')
     fields=['id','segmentation_status','file','source_start','source_end','content_label','energy_snr_db','wada_snr_db','snr_db','decision_policy','threshold_db',
         'threshold_justification','energy_quality','wada_quality','automatic_quality','quality','review_status','review_required','method_difference_db',
@@ -239,16 +262,16 @@ def export_report(records,threshold,directory,*,policy='conservative',justificat
         writer=csv.DictWriter(handle,fieldnames=fields,extrasaction='ignore');writer.writeheader();writer.writerows(records)
     e=lambda x:html.escape(str(x),quote=True)
     columns=[('id','ID'),('segmentation_status','Segmentation'),('content_label','Content'),('energy_snr_db','Pause energy (dB)'),('wada_snr_db','WADA (dB)'),('wada_status','WADA status'),('snr_db','Decision (dB)'),
-             ('automatic_quality','Automatic'),('quality','Reviewed quality'),('review_status','Review'),('noise_source','Noise estimate'),('note','Notes')]
+             ('automatic_quality','Automatic'),('quality','Quality'),('noise_source','Noise estimate'),('note','Notes')]
     rows=''.join('<tr>'+''.join('<td>'+e(r.get(key,''))+'</td>' for key,title in columns)+'</tr>' for r in records)
     counts={k:sum(r['quality']==k for r in records) for k in ('clean','noisy','unavailable')}
-    review_count=sum(r.get('review_required',True) for r in records)
+    warning_count=sum(bool(r.get('quality_warning')) for r in records)
     doc=f'''<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Audio Quality SNR</title><style>body{{font:15px/1.5 Segoe UI,Arial;margin:0;background:#EFF4F5;color:#173B40}}header{{background:#173B40;color:white;padding:28px}}main{{padding:22px}}section{{background:white;border:1px solid #D5E3E5;border-radius:8px;padding:20px;margin-bottom:18px}}.cards{{display:flex;gap:15px;flex-wrap:wrap}}.cards div{{background:#E8F3F0;padding:14px;border-radius:6px}}.scroll{{overflow:auto}}table{{border-collapse:collapse;width:100%}}td,th{{padding:10px;border-bottom:1px solid #D5E3E5;text-align:left;vertical-align:top}}th{{background:#EAF2F3;white-space:nowrap}}h1,h2{{margin-top:0}}</style>
-<header><h1>Audio Quality SNR</h1><div>Two independent estimates · human quality review</div></header><main>
-<section><div class="cards"><div>Clean: {counts['clean']}</div><div>Noisy: {counts['noisy']}</div><div>Unavailable: {counts['unavailable']}</div><div>Review needed: {review_count}</div></div></section>
-<section><h2>Threshold and decision</h2><p>Threshold: <b>{float(threshold):g} dB</b> · Rule: <b>{e(policy)}</b></p><p><b>Justification:</b> {e(justification.strip() or 'Pending listening review')}</p><p>The initial threshold is 20 dB. This threshold does not follow signal loudness. Human quality overrides are retained when the threshold changes.</p></section>
-<section><h2>Methods and limits</h2><p>Pause-energy: 20 ms frames, 10 ms hop; subtract background-noise power estimated from natural pause anchors. Noise power is interpolated between observed anchors and held constant beyond them; unobserved changes cannot be recovered.</p><p>WADA-SNR: Kim and Stern (2008), alpha=0.4 waveform-distribution model and original CMU lookup table (−20 to 100 dB, 1 dB grid). Balanced blocks are combined by estimated signal/noise energies. Range-limited values are flagged and excluded from automatic decision selection. The JSON records every block and boundary condition.</p><p>These estimates are not ground truth. Disagreement above 6 dB, different quality labels, mixed/music content, unavailable methods and variable noise are flagged. Review before final labeling; no method silently replaces a human correction.</p></section>
+<header><h1>Audio Quality SNR</h1><div>Two independent estimates · optional manual corrections</div></header><main>
+<section><div class="cards"><div>Clean: {counts['clean']}</div><div>Noisy: {counts['noisy']}</div><div>Unavailable: {counts['unavailable']}</div><div>With estimator notes: {warning_count}</div></div></section>
+<section><h2>Threshold and decision</h2><p>Threshold: <b>{float(threshold):g} dB</b> · Rule: <b>{e(policy)}</b></p><p><b>Justification:</b> {e(justification.strip() or 'Not provided; justify the final threshold in the project report')}</p><p>The initial threshold is 20 dB. This threshold does not follow signal loudness. Human quality overrides are retained when the threshold changes.</p></section>
+<section><h2>Methods and limits</h2><p>Pause-energy: 20 ms frames, 10 ms hop; subtract background-noise power estimated from natural pause anchors. Noise power is interpolated between observed anchors and held constant beyond them; unobserved changes cannot be recovered.</p><p>WADA-SNR: Kim and Stern (2008), alpha=0.4 waveform-distribution model and original CMU lookup table (−20 to 100 dB, 1 dB grid). Balanced blocks are combined by estimated signal/noise energies. Range-limited values are flagged and excluded from automatic decision selection. The JSON records every block and boundary condition.</p><p>These estimates are not ground truth. Disagreement above 6 dB, different quality labels, mixed/music content, unavailable methods and variable noise are flagged. These notes do not require approval; listen and correct labels if needed. No method silently replaces a human correction.</p></section>
 <section class="scroll"><table><tr>{''.join('<th>'+e(title)+'</th>' for key,title in columns)}</tr>{rows}</table></section></main></html>'''
     base.with_suffix('.html').write_text(doc,encoding='utf-8')
     return tuple(str(base.with_suffix(ext)) for ext in ('.html','.json','.csv'))

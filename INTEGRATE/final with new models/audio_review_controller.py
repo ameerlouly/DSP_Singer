@@ -7,6 +7,7 @@ each result is ready.
 
 from output_folders import new_run_folder, project_folder, save_dialog_folder, step_folder
 from processing_errors import exception_details, save_failure_log
+from table_sizing import TableSizing
 import copy
 import json
 import math
@@ -20,7 +21,7 @@ from pathlib import Path
 from PyQt6.QtCore import QEvent, QObject, QThread, QTimer, QUrl, QLocale, QSignalBlocker, pyqtSignal
 from PyQt6.QtGui import QDoubleValidator
 from PyQt6.QtMultimedia import QAudioOutput, QMediaPlayer
-from PyQt6.QtWidgets import (QAbstractItemView, QFileDialog, QHeaderView, QInputDialog,
+from PyQt6.QtWidgets import (QAbstractItemView, QFileDialog, QInputDialog,
                             QMessageBox, QTableWidgetItem)
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.collections import PolyCollection
@@ -145,6 +146,7 @@ class ProcessingWorkspace(QObject):
         self.play_timer.timeout.connect(self.enforce_playback_end)
 
         self.table(self.ui.regionTable)
+        self.equal_columns(self.ui.regionTable)
         self.table(self.ui.segmentTable)
         self.table(self.ui.unresolvedTable)
         self.table(self.ui.snrTable)
@@ -270,29 +272,26 @@ class ProcessingWorkspace(QObject):
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
-        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        table.horizontalHeader().setResizeContentsPrecision(48)
-        table.horizontalHeader().setStretchLastSection(True)
-        table.verticalHeader().hide()
+        table._table_sizing = TableSizing(table)
+
+    @staticmethod
+    def equal_columns(table):
+        """Start with equal widths, then permit manual resizing."""
+        table._table_sizing.equal = True
+        table._table_sizing.schedule()
 
     @staticmethod
     @contextmanager
     def table_batch(table):
-        """Measure automatic column widths once after a bulk update."""
-        header=table.horizontalHeader()
-        auto=[i for i in range(table.columnCount())
-              if header.sectionResizeMode(i)==QHeaderView.ResizeMode.ResizeToContents]
-        enabled=table.updatesEnabled()
+        """Repaint once, keeping any user-adjusted column widths."""
+        enabled = table.updatesEnabled()
         table.setUpdatesEnabled(False)
         try:
-            for i in auto:
-                header.setSectionResizeMode(i,QHeaderView.ResizeMode.Fixed)
             with QSignalBlocker(table):
                 yield
         finally:
-            for i in auto:
-                header.setSectionResizeMode(i,QHeaderView.ResizeMode.ResizeToContents)
             table.setUpdatesEnabled(enabled)
+            table._table_sizing.schedule()
 
     # Fill the table in one batch to avoid a repaint for every cell.
     @staticmethod
@@ -654,8 +653,7 @@ class ProcessingWorkspace(QObject):
         for row in range(first,first+count):
             r = self.regions[row]
             self.update_cells(table,row,[f"{r['start']:.4f}", f"{r['end']:.4f}", r['label'], r.get('auto_label',''),
-                confidence_text(r), 'Needs review' if r.get('needs_review') else
-                ('Edited' if r.get('manual_override') else ('Auto-approved' if r.get('auto_approved_by') else ''))])
+                confidence_text(r)])
             # Use a dash for a missing score so it won't look like zero confidence.
             def score(key):
                 return '—' if r.get(key) is None else f'{r[key]:.3f}'
@@ -1531,7 +1529,7 @@ class ProcessingWorkspace(QObject):
             self.snr_results=records;self.snr_snapshot=snapshot;self.applied_threshold=threshold
             self.snr_policy=policy;self.snr_justification=justification
             self.snr_report=None;self.dirty=True;self.refresh_snr()
-            self.status(f'{len(records)} two-method SNR results ready; {sum(r.get("review_required",True) for r in records)} need quality review.')
+            self.status(f'{len(records)} two-method SNR results ready; {sum(bool(r.get("quality_warning")) for r in records)} have estimator notes; correction is optional.')
         self.start('Calculating SNR for approved clips and unresolved spans…',action,done)
 
     # Reuse the measured scores when the user changes the threshold or decision rule.
@@ -1565,7 +1563,7 @@ class ProcessingWorkspace(QObject):
         basis={'reviewed_part4_pause_context':'Part 4 pauses','estimated_part4_pause':'Estimated pauses','quiet_frame_fallback':'Quiet-frame fallback','unavailable':'Unavailable'}.get(r.get('noise_source'),'Legacy estimate')
         return [r['id'],f"{r['source_start']:.3f}",f"{r['source_end']:.3f}",r.get('segmentation_status','resolved').title(),r['content_label'],
             number(r.get('energy_snr_db',r.get('snr_db'))),wada,number(r.get('snr_db')),
-            r['automatic_quality'],r['quality'],r.get('review_status','Legacy: recalculate'),basis,r['note']]
+            r['automatic_quality'],r['quality'],basis,r['note']]
 
     # Redraw the charts using the measurements currently on screen.
     def draw_snr_chart(self):
@@ -1576,7 +1574,7 @@ class ProcessingWorkspace(QObject):
         a.axvline(self.applied_threshold,color='#d59a45',linestyle='--',label=f'{self.applied_threshold:g} dB')
         a.set(xlabel='Estimated SNR (dB)',ylabel='Clips',title='Two-method comparison');a.legend(fontsize=8)
         labels=['clean','noisy','unavailable'];counts=[sum(r['quality']==l for r in self.snr_results) for l in labels]
-        self.quality_bars=b.bar(labels,counts,color=['#268b80','#e6ab54','#a1afb4']);b.set(title='Reviewed quality',ylabel='Clips')
+        self.quality_bars=b.bar(labels,counts,color=['#268b80','#e6ab54','#a1afb4']);b.set(title='Quality',ylabel='Clips')
         self.hist_canvas.draw_idle()
 
     # Catch results that belong to an earlier version of the clip list.
@@ -1606,8 +1604,6 @@ class ProcessingWorkspace(QObject):
         self.snr_controls_changed()
         folder = self.source_folder()
         if not automatic:
-            if not self.snr_justification:
-                raise ValueError('Enter a threshold justification before saving the SNR report.')
             folder = QFileDialog.getExistingDirectory(self.window, 'Save SNR HTML / CSV / JSON', str(folder))
             if not folder:
                 return
@@ -1629,7 +1625,7 @@ class ProcessingWorkspace(QObject):
     # Ask which saved quality results to reload for this audio.
     def load_snr(self):
         self.require_analysis_source()
-        path,_=QFileDialog.getOpenFileName(self.window,'Open SNR review','','SNR JSON (*.json)')
+        path,_=QFileDialog.getOpenFileName(self.window,'Open SNR results','','SNR JSON (*.json)')
         if not path:return
         session,audio=self.session,self.audio
         # Read the scores and apply the decision settings stored with them.
@@ -1645,8 +1641,8 @@ class ProcessingWorkspace(QObject):
         def done(result):
             self.snr_results,self.applied_threshold,self.snr_policy,self.snr_justification,self.snr_snapshot=result
             self.set_snr_controls();self.snr_report=Path(path).with_suffix('.html')
-            self.dirty=True;self.refresh_snr();self.status('SNR review loaded.')
-        self.start('Opening SNR review…',read,done)
+            self.dirty=True;self.refresh_snr();self.status('SNR results loaded.')
+        self.start('Opening SNR results…',read,done)
 
     # Check that the saved results belong to these clips and this recording.
     def match_snr(self,records):

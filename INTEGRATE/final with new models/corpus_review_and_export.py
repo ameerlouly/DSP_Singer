@@ -212,7 +212,7 @@ def reset_audio_results(record):
     for key in asr.COMPARISON_FIELDS:record.pop(key,None)
     for key in ('energy_snr_db','wada_snr_db','snr_analysis','snr_audio_signature','snr_decision_policy','snr_threshold_justification','snr_note','snr_override_by','snr_override_reason'):
         record.pop(key,None)
-    record.update(snr_review_required=True,snr_review_status='Recalculate after audio edit')
+    record.update(snr_review_required=False,snr_review_status='Recalculate after audio edit')
     record['audio_signature']=audio_signature(record)
     if record['label'] not in VOICE:record.update(status='not_applicable',transcript_status='not_applicable')
 
@@ -257,7 +257,7 @@ def edit(record,source,duration,start,end,label,quality,final,status,who,log,rea
     if quality!=draft.get('clean_noisy') and not reason.strip():raise ValueError('Enter a reason for a manual quality change.')
     draft.update(label=label,clean_noisy=quality,final_transcript=final.strip(),selected_transcript=final.strip())
     if not changed_time and quality in ('clean','noisy') and reason.strip():
-        draft.update(snr_review_required=False,snr_review_status='Human reviewed',snr_override_by=who,snr_override_reason=reason)
+        draft.update(snr_review_required=False,snr_review_status='Manually corrected',snr_override_by=who,snr_override_reason=reason)
         if (draft.get('snr_analysis') or {}).get('analysis_version')==2:
             analysis=copy.deepcopy(draft['snr_analysis']);snr.set_quality(analysis,quality,who,reason)
             draft.update(snr.corpus_fields(analysis))
@@ -551,6 +551,26 @@ REVIEW_COLUMNS = (
 )
 
 
+# Exact ordered header from the external review CSV format. Keep the richer
+# V15 exports too, because this schema cannot represent segmentation status.
+COMPATIBLE_REVIEW_COLUMNS = REVIEW_COLUMNS[:-1]
+COMPATIBLE_REVIEW_FILENAME = 'review_compatible.csv'
+
+
+def compatible_review_rows(records, rows):
+    """Project exported rows into the 16-column schema without normalizing text."""
+    for record, row in zip(records, rows, strict=True):
+        if record['segment_id'] != row['segment_id']:
+            raise ValueError('Compatible CSV records and review rows are not aligned.')
+        projected = {key: row[key] for key in COMPATIBLE_REVIEW_COLUMNS}
+        # The supplied format retains original Arabic spelling; do not reuse
+        # the normalized comparison strings from the detailed report.
+        projected.update(model_A_transcript=record.get('transcript_a') or '',
+                         model_B_transcript=record.get('transcript_b') or '',
+                         final_transcript=record.get('final_transcript') or '')
+        yield projected
+
+
 def review_rows(records, audit_log):
     """Project records into the spreadsheet schema, preserving the caller's row order."""
     # Find segment IDs inside saved changes so each row gets its own history.
@@ -669,7 +689,7 @@ def write_review_html(path, rows, partial=None, playable=False):
 
 
 # Use the destination extension to pick the writer for the same review table.
-def write_review_table(path, rows, *, playable=False):
+def write_review_table(path, rows, *, playable=False, csv_columns=REVIEW_COLUMNS):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(dir=path.parent, suffix=path.suffix, delete=False) as f:
@@ -678,7 +698,7 @@ def write_review_table(path, rows, *, playable=False):
         suffix = path.suffix.lower()
         if suffix == '.csv':
             with temporary.open('w', encoding='utf-8-sig', newline='') as stream:
-                writer = csv.DictWriter(stream, fieldnames=REVIEW_COLUMNS)
+                writer = csv.DictWriter(stream, fieldnames=csv_columns)
                 writer.writeheader()
                 writer.writerows(rows)
         elif suffix == '.html':
@@ -879,7 +899,7 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
     previews = [r for r in records if is_preview(r)]
     has_unresolved = bool(previews)
     records = [r for r in records if not is_preview(r)]
-    records=[dict(r) for r in records]
+    records=[snr.optional_quality_record(dict(r)) for r in records]
     for record in records:compare(record)
     if overlaps(records):raise ValueError('Final source spans overlap; correct them before corpus export.')
     pending=[]
@@ -890,7 +910,7 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
         if r['label'] in VOICE and r['status']=='accepted' and not asr.normalize_arabic(r['final_transcript']):
             raise ValueError('An accepted speech clip has no final transcript.')
         if r['clean_noisy'] not in ('clean','noisy'):pending.append(r['segment_id'])
-        if r.get('snr_db') is None or (r.get('snr_analysis') or {}).get('analysis_version')!=2 or r.get('snr_audio_signature')!=r['audio_signature'] or r.get('snr_review_required',True) or not r.get('snr_threshold_justification','').strip():
+        if r.get('snr_db') is None or (r.get('snr_analysis') or {}).get('analysis_version')!=2 or r.get('snr_audio_signature')!=r['audio_signature']:
             pending.append(r['segment_id'])
     timeline = timeline_records([*records,*previews],session,
                                 manifest.get('audio',''),source_review.get('snr') or [])
@@ -910,7 +930,7 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
     source_pending=bool(boundary_pending or has_unresolved or pending_candidates or pending_spans)
     if source_pending and not allow_partial:
         raise ValueError('Some source candidates or unresolved spans are still pending. Finish source review or explicitly enable partial export.')
-    if pending and not allow_partial:raise ValueError(f'{len(set(pending))} clips need ASR/quality review, current two-method SNR or a threshold justification. Complete them or explicitly enable partial export.')
+    if pending and not allow_partial:raise ValueError(f'{len(set(pending))} clips need completed ASR decisions or current usable SNR measurements. Complete them or explicitly enable partial export.')
     for record in records:require_continuous_pdf_audio(record)
     progress('Creating corpus output folder')
     out=new_run_folder(destination)
@@ -918,7 +938,7 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
         exported=[]
         for record in timeline:
             progress(f"Writing clip {len(exported)+1}/{len(timeline)}: {record['segment_id']}")
-            r=dict(record)
+            r=snr.optional_quality_record(dict(record))
             state=status(r)
             suffix={'resolved':'','pending':'_pending','unresolved':'_unresolved'}[state]
             name=f'segment_{len(exported)+1:05d}' + suffix
@@ -951,6 +971,8 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
                       pending_boundary_segment_ids=sorted(set(boundary_pending)),
                       asr_comparison_policy=asr.comparison_policy(),
                       snr_methods=list(snr.METHODS),second_snr_method='wada_snr',
+                      snr_quality_review_optional=True,
+                      snr_threshold_justification_provided=all(bool(str(r.get('snr_threshold_justification') or '').strip()) for r in exported),
                       snr_analysis_complete=all((r.get('snr_analysis') or {}).get('analysis_version')==2 and r.get('snr_audio_signature')==r.get('audio_signature') for r in exported))
         if manifest.get('source_review') is not None:
             progress('Writing source review JSON')
@@ -961,6 +983,11 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
         progress('Writing corpus and review CSV files')
         write_review_table(out / 'corpus.csv', rows)
         write_review_table(out / 'review.csv', rows)
+        progress('Writing compatible 16-column review CSV')
+        write_review_table(out / COMPATIBLE_REVIEW_FILENAME,
+                           compatible_review_rows(exported, rows),
+                           csv_columns=COMPATIBLE_REVIEW_COLUMNS)
+        metadata['compatible_review_csv'] = COMPATIBLE_REVIEW_FILENAME
         progress('Writing corpus metadata JSON')
         write_json_file(out/'corpus.json', dict(metadata=metadata, segments=rows))
         progress('Writing corpus audit JSON')

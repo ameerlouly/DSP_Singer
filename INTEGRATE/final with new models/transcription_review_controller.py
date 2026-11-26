@@ -15,7 +15,7 @@ import threading
 import uuid
 
 from PyQt6.QtCore import QObject, Qt, QSettings, pyqtSignal
-from PyQt6.QtWidgets import QFileDialog, QHeaderView, QInputDialog, QMessageBox
+from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
 import soundfile as sf
 import transcript_agreement_and_io as engines
 import corpus_review_and_export as corpus
@@ -37,12 +37,9 @@ class ASRWorkspace(QObject):
         self.transcript_draft=False
         self.playback_dir=tempfile.TemporaryDirectory(prefix='speech_corpus_play_')
         self.p.table(self.ui.asrTable);self.p.table(self.ui.finalTable);self.p.table(self.ui.processSummaryTable)
-        header = self.ui.finalTable.horizontalHeader()
-        header.setStretchLastSection(False)
         for column, key in enumerate(corpus.REVIEW_COLUMNS):
             if 'transcript' in key or key in ('audio_file', 'change_log'):
-                header.setSectionResizeMode(column, QHeaderView.ResizeMode.Interactive)
-                header.resizeSection(column, 300 if 'transcript' in key else 200)
+                self.ui.finalTable._table_sizing.preferred[column] = 300 if 'transcript' in key else 200
         for text in (self.ui.asrTextA,self.ui.asrTextB,self.ui.asrNormalizedA,self.ui.asrNormalizedB,self.ui.asrFinalText,self.ui.finalText):
             option=text.document().defaultTextOption();option.setAlignment(Qt.AlignmentFlag.AlignRight)
             option.setTextDirection(Qt.LayoutDirection.RightToLeft);text.document().setDefaultTextOption(option)
@@ -223,13 +220,15 @@ class ASRWorkspace(QObject):
         records,migrated,migrated_a=prepared if prepared is not None else self.prepare_records(data)
         self.ui.qwenModel.setText(engines.DEFAULT_QWEN_MODEL)
         self.ui.cohereModel.setText(data.get('cohere_model') or engines.DEFAULT_COHERE_MODEL)
-        self.records=sorted(records,key=lambda r:(float(r['start']),float(r['end']),r['segment_id']))
+        self.records=sorted((snr.optional_quality_record(r) for r in records),key=lambda r:(float(r['start']),float(r['end']),r['segment_id']))
         self.audit_log=data.get('audit_log',[])
         self.signature=data.get('signature')
-        # A legacy session hashes SNR rows in their stored order. Migrate only
-        # when that original signature matches and row order is the sole change.
-        if saved_snr and self.p.snr_results == sorted(saved_snr,key=snr.source_time_key):
-            if self.signature == corpus.source_signature(self.p,saved_snr):
+        # Accept the deterministic SNR status migration only when the original
+        # signature matches and current results are exactly the reclassified rows.
+        if saved_snr and self.signature == corpus.source_signature(self.p,saved_snr):
+            ordered=sorted(saved_snr,key=snr.source_time_key)
+            migrated_snr=snr.reclassify(ordered,self.p.applied_threshold,self.p.snr_policy,self.p.snr_justification)
+            if self.p.snr_results == ordered or self.p.snr_results == migrated_snr:
                 self.signature=corpus.source_signature(self.p)
         self.source_metadata=data.get('source_metadata',{})
         self.refresh()
@@ -646,7 +645,8 @@ class ASRWorkspace(QObject):
             if automatic:
                 report = Path(result['output_dir']) / 'corpus_report.html'
                 message = (f"Automatic processing finished. Partial corpus: {result['clips']} clips. "
-                           f"Playable HTML: {report}. Pending boundaries and transcripts remain unapproved.")
+                           f"Playable HTML: {report}. Compatible CSV: {corpus.COMPATIBLE_REVIEW_FILENAME}. "
+                           f"Pending boundaries and transcripts remain unapproved.")
                 self.w.append_log(message)
                 self.p.status(message)
             else:

@@ -72,7 +72,7 @@ class TwoMethodSNR(unittest.TestCase):
         item=dict(analysis_version=2,content_label='speech',energy_snr_db=22.,wada_snr_db=w['value_db'],wada_details=w,
             energy_details=dict(status='ok',noise_source='reviewed_part4_pause_context'))
         snr.decision(item,20,'conservative','Listening check')
-        self.assertEqual(item['snr_db'],22.);self.assertTrue(item['review_required'])
+        self.assertEqual(item['snr_db'],22.);self.assertFalse(item['review_required']);self.assertTrue(item['quality_warning'])
         snr.decision(item,20,'wada','Listening check');self.assertIsNone(item['snr_db'])
     # Build a clip with fixed quality scores so the decision rules can be checked
     # independently.
@@ -83,15 +83,15 @@ class TwoMethodSNR(unittest.TestCase):
     # Make the estimators disagree and inspect the policy and review flag.
     def test_decision_rule_and_disagreement_are_explicit(self):
         r=self.record();self.assertEqual((r['snr_db'],r['automatic_quality']),(15.,'noisy'))
-        self.assertTrue(r['review_required'])
+        self.assertFalse(r['review_required']);self.assertTrue(r['quality_warning'])
         snr.decision(r,20,'energy','Listening check');self.assertEqual(r['automatic_quality'],'clean')
-        self.assertTrue(r['review_required'])
+        self.assertFalse(r['review_required']);self.assertTrue(r['quality_warning'])
     # A valid listening correction should survive a new threshold or recalculation.
     def test_threshold_changes_and_recalculation_preserve_human_correction(self):
         r=self.record();snr.set_quality(r,'clean','Reviewer','Background acceptable after listening')
         changed=snr.reclassify([r],30,'conservative','Different calibrated threshold')[0]
         self.assertEqual(changed['quality'],'clean');self.assertEqual(changed['automatic_quality'],'noisy')
-        self.assertEqual(changed['review_status'],'Human reviewed')
+        self.assertEqual(changed['review_status'],'Manually corrected')
         fresh=self.record();snr.preserve_override(fresh,r);self.assertEqual(fresh['quality'],'clean')
         other=self.record();other['audio_sha256']='changed';snr.preserve_override(other,r);self.assertEqual(other['quality'],'noisy')
         snr.set_quality(changed,None,'Reviewer','Restore automatic');self.assertEqual(changed['quality'],'noisy')
@@ -100,7 +100,8 @@ class TwoMethodSNR(unittest.TestCase):
     def test_reports_keep_both_values_policy_justification_and_override(self):
         r=self.record();snr.set_quality(r,'clean','Reviewer','Listened')
         with tempfile.TemporaryDirectory() as d:
-            with self.assertRaisesRegex(ValueError,'justification'):snr.export_report([r],20,d)
+            _,no_reason,_=snr.export_report([r],20,d)
+            self.assertFalse(json.loads(Path(no_reason).read_text())['threshold_justification_provided'])
             html,json_file,csv_file=snr.export_report([r],20,d,justification='Listening review <script>unsafe</script>')
             payload=json.loads(Path(json_file).read_text())
             self.assertEqual(payload['methods'],['pause_energy','wada_snr']);self.assertEqual(payload['second_method'],'wada_snr')
@@ -112,7 +113,7 @@ class TwoMethodSNR(unittest.TestCase):
     def test_legacy_data_remains_marked_single_method(self):
         r=dict(id='old',file='old.wav',snr_db=18.,quality='noisy',automatic_quality='noisy',content_label='speech')
         new=snr.reclassify([r],20,'energy','Legacy check')[0]
-        self.assertTrue(new['review_required']);self.assertIsNone(new['wada_snr_db'])
+        self.assertFalse(new['review_required']);self.assertTrue(new['quality_warning']);self.assertIsNone(new['wada_snr_db'])
         self.assertTrue(any('Legacy' in text for text in new['review_reasons']))
 
 if __name__=='__main__':unittest.main()
