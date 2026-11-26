@@ -227,27 +227,21 @@ def require_pdf_review(data,item):
 
 
 # Mark this candidate approved and record the boundary check under the editor's name.
-def approve_segment(data, index, reviewer):
+def approve_segment(data, index, reviewer, *, approval_method="individual"):
     reviewer=reviewer.strip()
     if not reviewer:
         raise ValueError('Enter the reviewer name first.')
     item=data['segments'][index]
     before=copy.deepcopy(item)
-    if item['source_mode']=='continuous_source':
-        validate_bounds(item['source_start'],item['source_end'],data['source']['duration_seconds'])
-    else:
-        trim_start,trim_end=candidate_trim_bounds(item)
-        duration=trim_end-trim_start
-        if not 5 <= duration <= 15:
-            raise ValueError('This candidate is not between 5 and 15 seconds; correct its boundaries first.')
+    # Check actual sample count and continuous source mapping, including exact 5/15 s boundaries.
     signature=pdf_review_signature(data,item)
-    item['pdf_boundary_review']=dict(reviewer=reviewer,time_utc=utc_now(),signature=signature,
+    item['pdf_boundary_review']=dict(reviewer=reviewer,time_utc=utc_now(),signature=signature,approval_method=approval_method,
         attestation='Annotator confirms complete words, real pauses and about 0.1–0.2 s natural pause at both edges; no synthetic padding or joins.')
     item.update(status='approved', reviewed_by=reviewer)
     audit(data,'approve_segment',reviewer,item['id'],before,item)
 
 
-def approve_segments(data, indices, reviewer):
+def approve_segments(data, indices, reviewer, *, approval_method="individual"):
     """Approve selected clips atomically, retaining an audit entry per clip."""
     if not reviewer.strip():
         raise ValueError('Enter the reviewer name first.')
@@ -266,7 +260,7 @@ def approve_segments(data, indices, reviewer):
         if item['status'] != 'approved' or checked!=pdf_review_signature(draft,item):
             try:
                 draft['segments'][index] = copy.copy(item)
-                approve_segment(draft, index, reviewer)
+                approve_segment(draft, index, reviewer, approval_method=approval_method)
             except ValueError as exc:
                 raise ValueError(f"Clip {item['id']}: {exc}") from exc
             count += 1
@@ -274,6 +268,28 @@ def approve_segments(data, indices, reviewer):
     data['changes'].extend(draft['changes'])
     return count
 
+
+
+def batch_approval_plan(data):
+    """Return eligible pending rows and skipped invalid rows without changing the session.
+
+    Include automatically generated boundary-review candidates. Duration eligibility
+    does not itself attest to natural pauses; the batch action requires the reviewer
+    to confirm the boundaries. Existing valid manual candidates remain eligible.
+    """
+    rows, skipped = [], []
+    for index, item in enumerate(data['segments']):
+        if item.get('status') != 'pending':
+            continue
+        try:
+            if item.get('label') not in LABELS:
+                raise ValueError('Choose a valid label.')
+            pdf_audio_mapping(data, item)
+        except (ValueError, KeyError, TypeError, OverflowError) as exc:
+            skipped.append((index, str(exc)))
+            continue
+        rows.append(index)
+    return rows, skipped
 
 
 # Keep the candidate in the history while excluding it from the approved set.
@@ -347,8 +363,15 @@ def same_snr_source(snapshot, session):
             {k:v for k,v in session.items() if k not in ('asr_skipped_ranges','asr_preference_history')})
 
 
+def ignored_gap(item):
+    """Automatic uncovered gaps are audit-only unless explicitly labelled voice."""
+    category = item.get('category')
+    is_gap = category == 'uncovered_gap' or (not category and str(item.get('id', '')).startswith('gap-'))
+    return is_gap and item.get('label') not in ('speech', 'mixed')
+
+
 def visible_unresolved(data):
-    """Show only source ranges outside active manually created clips."""
+    """Show reviewable source ranges, excluding automatic non-voice/unclassified gaps."""
     covered = sorted((round(float(item['source_start']) * RATE),
                       round(float(item['source_end']) * RATE))
                      for item in data.get('segments', [])
@@ -365,6 +388,8 @@ def visible_unresolved(data):
     ends = [right for _, right in merged]
     result = []
     for index, item in enumerate(data.get('unresolved', [])):
+        if ignored_gap(item):
+            continue
         first, last = (round(t * RATE) for t in unresolved_bounds(item))
         cursor = first
         for n in range(bisect_right(ends, first), len(merged)):
@@ -397,8 +422,7 @@ def downstream_unresolved(data, approved_ranges):
     covered = sorted((round(a*RATE), round(b*RATE)) for a,b in [*approved_ranges, *pending_manual])
     total = round(data['source']['duration_seconds']*RATE)
     for item in data.get('unresolved', []):
-        label = item.get('label') or 'unclassified'
-        if item.get('category') == 'uncovered_gap' and label not in ('speech','mixed'):
+        if ignored_gap(item):
             continue
         first, last = (round(t*RATE) for t in unresolved_bounds(item))
         if not 0 <= first < last <= total:
@@ -731,7 +755,7 @@ def report_html(data, exports):
     excluded=sum(s['status']=='excluded' for s in data['segments'])
     unresolved_pending=sum(s['status']!='reviewed' for _,s,_,_ in visible_unresolved(data))
     return f'''<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Step 4 review</title><style>body{{font:15px/1.5 Segoe UI,Arial;background:#f2f6f7;color:#173a40;margin:0}}header{{background:#173a40;color:white;padding:24px}}main{{padding:18px;max-width:1400px;margin:auto}}section{{background:white;border:1px solid #dbe5e6;border-radius:10px;padding:18px;margin-bottom:16px}}.scroll{{overflow:auto}}table{{border-collapse:collapse;font-size:13px;width:100%}}th,td{{text-align:left;border-bottom:1px solid #ddd;padding:8px}}th{{background:#eaf4f4}}audio{{width:180px}}.warning{{background:#fff4d9}}</style></head><body><header><h1>Step 4 review</h1><p>{e(data['source']['audio_name'])}</p></header><main>
-<section><h2>Summary</h2><p>Approved clips: {approved}. Pending clips: {pending}. Excluded clips: {excluded}. Unresolved spans still pending: {unresolved_pending}. Only approved clips are exported.</p><p>Original audio and automatic candidates are preserved. Each item records who reviewed it and the full audit is in review_session.json.</p></section>
+<section><h2>Summary</h2><p>Approved clips: {approved}. Pending clips: {pending}. Excluded clips: {excluded}. Unresolved spans still pending: {unresolved_pending}. Only approved clips are exported.</p><p>Original audio and automatic candidates are preserved. Unclassified or non-voice uncovered gaps are excluded from the review queue but remain in review_session.json; these estimates do not prove silence. Each item records who reviewed it and the full audit is in review_session.json.</p></section>
 <section class="warning"><b>Boundary review:</b> approving means the annotator has checked the cut. Some original candidates contain synthetic silence or multiple source ranges. An unchanged candidate retains these; the source start/end columns are its outer envelope, not proof of a continuous interval.</section>
 <section><h2>Segments</h2><div class="scroll"><table><tr><th>ID</th><th>Source start</th><th>Source end</th><th>Label</th><th>Status</th><th>Mode</th><th>Reviewer</th><th>Method</th><th>Original source pieces (s)</th><th>Notes</th><th>Export</th><th>Play</th></tr>{''.join(rows)}</table></div></section>
 <section><h2>Overlapping approved clips</h2><p>{len(overlaps)} pair(s) overlap in original source time. This can duplicate audio; verify each pair.</p><ul>{overlap_rows}</ul></section>

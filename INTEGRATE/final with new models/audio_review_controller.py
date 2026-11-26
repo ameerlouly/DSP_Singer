@@ -6,6 +6,7 @@ each result is ready.
 """
 
 from output_folders import new_run_folder, project_folder, save_dialog_folder, step_folder
+from processing_errors import exception_details, save_failure_log
 import copy
 import json
 import math
@@ -80,13 +81,14 @@ class Task(QThread):
         self.action = action
         self.value = None
         self.failure = None
+        self.failure_traceback = ''
 
     # Run the job here and let the window handle either the result or the error.
     def run(self):
         try:
             self.value = self.action(self.message.emit)
         except Exception as exc:
-            self.failure = str(exc)
+            self.failure, self.failure_traceback = exception_details(exc)
 
 
 class ProcessingWorkspace(QObject):
@@ -250,8 +252,7 @@ class ProcessingWorkspace(QObject):
             if index == 5:
                 self.asr.flush_review_rows()
                 self.asr.refresh_summary()
-                if not self.asr.final_draft:
-                    self.asr.select_final()
+                self.asr.select_final()
             elif index == 4 and not self.asr.transcript_draft:
                 self.asr.select_asr()
         if index == 3 and self.snr_view_dirty:
@@ -328,7 +329,7 @@ class ProcessingWorkspace(QObject):
         try:
             action()
         except Exception as exc:
-            QMessageBox.warning(self.window, 'Cannot complete action', str(exc))
+            self.task_error(*exception_details(exc), operation='Requested action')
 
     # Put the latest message where the reviewer can see it.
     def status(self, text):
@@ -353,6 +354,7 @@ class ProcessingWorkspace(QObject):
         self.set_shared_controls_enabled(False)
         for control in self.window.controls:
             control.setEnabled(False)
+        self.task_description = description
         self.task = Task(action, self)
         self.finished_callback = done
         self.task.message.connect(self.status)
@@ -365,14 +367,29 @@ class ProcessingWorkspace(QObject):
         try:
             self.finished_callback(value)
         except Exception as exc:
-            self.task_error(str(exc))
+            self.task_error(*exception_details(exc))
 
     # Show the error and stop the automatic sequence at the stage that failed.
-    def task_error(self, text):
+    def task_error(self, text, trace='', *, operation=None):
+        stage = self.auto_stage
         self.auto_stage = None
+        operation = operation or (getattr(self, 'task_description', None) if self.task is not None else None) or stage or 'Processing'
+        text = str(text).strip() or 'Unknown processing error. See the diagnostic log.'
+        try:
+            directory = self.source_folder() / 'Review and export' if self.audio else None
+        except (OSError, AttributeError, TypeError):
+            directory = None
+        path = save_failure_log(text, trace, directory, operation)
         self.status('Failed: ' + text)
-        self.window.append_log('Parts 3–5: ' + text)
-        QMessageBox.warning(self.window, 'Processing failed', text)
+        self.window.append_log(f'{operation}: {text}')
+        if path:
+            self.window.append_log(f'Error log: {path}')
+        message = f'{operation}\n\n{text}'
+        if path:
+            message += f'\n\nFull error log: {path}'
+        if trace:
+            self.window.append_log(trace)
+        QMessageBox.warning(self.window, 'Processing failed', message)
 
     # Release the finished task so the next queued stage can start.
     def task_finished(self):
@@ -380,7 +397,7 @@ class ProcessingWorkspace(QObject):
         if self.task.failure is None:
             self.task_result(self.task.value)
         else:
-            self.task_error(self.task.failure)
+            self.task_error(self.task.failure, self.task.failure_traceback)
         self.task = None
         self.finished_callback = None
         self.ui.pages.setEnabled(True)
@@ -416,6 +433,7 @@ class ProcessingWorkspace(QObject):
         if not editor:
             raise ValueError('Enter an editor name to start Auto process.')
         self.ui.reviewer.setText(editor)
+        self.asr.stop_event.clear()
         try:
             if download:
                 self.auto_stage = 'download'
@@ -461,25 +479,22 @@ class ProcessingWorkspace(QObject):
                 if self.task is None:
                     self.advance_auto_process()
             elif self.auto_stage == 'asr':
-                self.auto_stage = None
-                self.window.navigationList.setCurrentRow(4)
                 errors = any(r.get('asr_errors') for r in self.asr.records)
                 if self.asr.stop_event.is_set() or errors:
-                    self.status('Transcription stopped or had errors. Check Transcription and Activity before continuing.')
+                    self.auto_stage = None
+                    self.window.navigationList.setCurrentRow(4)
+                    self.status('Transcription stopped or had errors. Check Transcription and Activity before continuing. Automatic export was not started.')
                 else:
-                    pending = [i for i, row in enumerate(self.asr.records) if row.get('status') == 'needs_review'
-                               and row.get('asr_a_done') and row.get('asr_b_done') and not row.get('human_override')]
-                    message = 'Automatic processing finished.'
-                    if pending:
-                        self.ui.asrTable.selectRow(pending[0])
-                        message += f' {len(pending)} transcript(s) await your choice. Listen and choose Qwen or Cohere, or enter a correction.'
-                    self.window.append_log(message)
-                    self.status(message)
+                    self.auto_stage = 'export'
+                    self.asr.export_automatic()
+            elif self.auto_stage == 'export':
+                # The export worker has successfully saved the corpus and playable HTML.
+                self.auto_stage = None
+                self.window.navigationList.setCurrentRow(5)
             elif self.auto_stage is not None:
                 raise ValueError('Unknown automatic processing stage.')
         except Exception as error:
-            self.auto_stage = None
-            self.task_error(str(error))
+            self.task_error(*exception_details(error))
 
     def set_shared_controls_enabled(self, enabled):
         """Support Designer rows with or without intermediate QWidget containers."""
@@ -1371,17 +1386,28 @@ class ProcessingWorkspace(QObject):
         count=review.approve_segments(self.session,rows,self.reviewer())
         self.modified_session(rows);self.status(f'{count} clips approved. Export or calculate SNR when ready.')
 
-    # Collect the pending candidates for one batch approval.
+    # Approve all duration-valid pending candidates, including boundary-review candidates.
     def approve_all(self):
         if not self.session:
             raise ValueError('Generate or open candidates first.')
-        rows = [i for i,item in enumerate(self.session['segments']) if item['status'] == 'pending' and not (item.get('original') or {}).get('manual_boundary_review_required')]
+        rows, skipped = review.batch_approval_plan(self.session)
         if not rows:
-            self.status('No ordinary pending candidates to batch approve. Boundary-review candidates must be checked and approved individually.')
+            self.status(f'No eligible pending 5–15 second candidates. {len(skipped)} invalid candidates left pending.')
             return
-        count = review.approve_segments(self.session, rows, self.reviewer())
+        flagged = sum(bool((self.session['segments'][i].get('original') or {}).get('manual_boundary_review_required')) for i in rows)
+        if flagged:
+            answer = QMessageBox.question(self.window, 'Confirm batch boundary approval',
+                f'Approve all {len(rows)} eligible 5–15 second candidates, including {flagged} with unverified natural pauses? '
+                'Duration alone does not prove a safe cut. By selecting Yes, you confirm that the clips have complete words '
+                'and about 0.1–0.2 seconds of natural pause at both edges. '
+                'Invalid or out-of-range candidates and unresolved spans will remain pending.',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, QMessageBox.StandardButton.No)
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        count = review.approve_segments(self.session, rows, self.reviewer(), approval_method='batch_approve_all')
         self.modified_session(rows)
-        self.status(f'{count} pending candidates approved. Boundary-review candidates require individual approval.')
+        self.status(f'{count} candidates approved in one batch, including {flagged} boundary-review candidates. '
+                    f'{len(skipped)} invalid or out-of-range candidates left pending.')
 
     # Set whether this unresolved interval goes on to recognition.
     def toggle_span_asr(self):

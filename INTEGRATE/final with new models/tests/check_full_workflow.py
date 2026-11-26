@@ -175,20 +175,27 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  assert (out/'corpus_report.html').is_file() and (out/'source_review.json').is_file()
  assert (out/'segment_00002.txt').read_text(encoding='utf-8')=='السلام عليك'
  assert json.loads((out/'corpus.json').read_text())['metadata']['partial'] is False
- # Structural changes preserve exact source samples and invalidate old annotations.
- select(a.ui.finalTable,[0,1]);before=np.concatenate([corpus.read_audio(a.records[0]),corpus.read_audio(a.records[1])]);a.merge()
- merged=a.records[0];assert merged['duration']==12 and not merged['asr_a_done'] and merged['snr_db'] is None
+ # Review & Export is read-only; Next segment navigates the transcription table.
+ saved_records=copy.deepcopy(a.records)
+ a.ui.finalTable.selectRow(0);a.select_final()
+ assert a.ui.finalText.isReadOnly()
+ assert a.ui.finalText.toPlainText()==a.records[0]['final_transcript']
+ a.ui.asrTable.selectRow(0);a.select_asr();a.next_segment()
+ assert p.selected(a.ui.asrTable)==[1]
+ assert a.current_asr==a.records[1]['segment_id']
+ assert a.records==saved_records
+ # Exercise the underlying structural helpers independently of the removed UI.
+ before=np.concatenate([corpus.read_audio(a.records[0]),corpus.read_audio(a.records[1])])
+ merged=corpus.merge(a.records[:2]);assert merged['duration']==12 and not merged['asr_a_done'] and merged['snr_db'] is None
  assert np.array_equal(corpus.read_audio(merged),before)
- a.ui.finalTable.selectRow(0);a.ui.finalSplitPosition.setValue(6);a.split()
- assert len(a.records)==3 and a.records[0]['duration']==a.records[1]['duration']==6
- assert np.array_equal(corpus.read_audio(a.records[0]),before[:6*rate])
- a.ui.finalTable.selectRow(0);a.delete();assert len(a.records)==2
- a.ui.finalStart.setValue(0);a.ui.finalEnd.setValue(6);a.ui.finalLabel.setCurrentText('speech');a.add();assert len(a.records)==3
- try:corpus.export_corpus(a.records,{},a.audit_log,root)
+ parts=corpus.split(merged,6);assert all(r['duration']==6 for r in parts)
+ assert np.array_equal(corpus.read_audio(parts[0]),before[:6*rate])
+ incomplete=[*parts,a.records[2]]
+ try:corpus.export_corpus(incomplete,{},a.audit_log,root)
  except ValueError:pass
  else:raise AssertionError('Incomplete annotations exported as complete')
- partial=corpus.export_corpus(a.records,{},a.audit_log,root,True);assert partial['partial']
+ partial=corpus.export_corpus(incomplete,{},a.audit_log,root,True);assert partial['partial']
  assert not errors,errors
  p.dirty=False;w.close()
-print('PASS: approved continuous source audio/natural context, two-engine Arabic ASR orchestration, disagreement review, cancellation/resume, per-result autosave, combined-session restore, WAV/TXT/CSV export, structural edits, result invalidation and partial-export gating.')
+print('PASS: approved continuous source audio/natural context, two-engine Arabic ASR orchestration, disagreement review, cancellation/resume, per-result autosave, combined-session restore, WAV/TXT/CSV export, read-only review, next-segment navigation, structural helpers, result invalidation and partial-export gating.')
 print('ASR outputs were controlled test doubles. Actual Qwen/Cohere downloads and model accuracy were not exercised.')

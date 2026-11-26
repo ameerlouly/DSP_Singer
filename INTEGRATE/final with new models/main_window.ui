@@ -1,4 +1,4 @@
-<?xml version='1.0' encoding='utf-8'?>
+<?xml version='1.0' encoding='UTF-8'?>
 <ui version="4.0">
   <class>MainWindow</class>
   <widget class="QMainWindow" name="MainWindow">
@@ -854,7 +854,7 @@ QPushButton#openProject:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                                   <item row="0" column="0">
                                                     <widget class="QLabel" name="outputFolderLabel">
                                                       <property name="text">
-                                                        <string>&#128193;  Destination  </string>
+                                                        <string>📁  Destination  </string>
                                                       </property>
                                                       <property name="wordWrap">
                                                         <bool>true</bool>
@@ -900,10 +900,10 @@ QPushButton#browseOutputButton:disabled {background:#EDF1F2; color:#87999D; bord
                                                       </property>
                                                     </widget>
                                                   </item>
-                                                <item row="1" column="0">
+                                                  <item row="1" column="0">
                                                     <widget class="QLabel" name="folderNameLabel">
                                                       <property name="text">
-                                                        <string>&#128193;  Folder name</string>
+                                                        <string>📁  Folder name</string>
                                                       </property>
                                                       <property name="wordWrap">
                                                         <bool>true</bool>
@@ -1107,49 +1107,123 @@ QPushButton#chooseVideoButton:disabled {background:#EDF1F2; color:#87999D; borde
                                                 <layout class="QGridLayout" name="extractionSettingsGrid">
                                                   <item row="0" column="0">
                                                     <widget class="QLabel" name="channelBoxLabel">
-                                                      <property name="text"><string>Channels</string></property>
-                                                      <property name="buddy"><cstring>channelBox</cstring></property>
+                                                      <property name="text">
+                                                        <string>Channels</string>
+                                                      </property>
+                                                      <property name="buddy">
+                                                        <cstring>channelBox</cstring>
+                                                      </property>
                                                     </widget>
                                                   </item>
                                                   <item row="1" column="0">
                                                     <widget class="QComboBox" name="channelBox">
-                                                      <property name="currentIndex"><number>0</number></property>
-                                                      <item><property name="text"><string>Mono</string></property></item>
-                                                      <item><property name="text"><string>Stereo</string></property></item>
+                                                      <property name="currentIndex">
+                                                        <number>0</number>
+                                                      </property>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>Mono</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>Stereo</string>
+                                                        </property>
+                                                      </item>
                                                     </widget>
                                                   </item>
                                                   <item row="0" column="1">
                                                     <widget class="QLabel" name="sampleRateBoxLabel">
-                                                      <property name="text"><string>Sample rate (Hz)</string></property>
-                                                      <property name="buddy"><cstring>sampleRateBox</cstring></property>
+                                                      <property name="text">
+                                                        <string>Sample rate (Hz)</string>
+                                                      </property>
+                                                      <property name="buddy">
+                                                        <cstring>sampleRateBox</cstring>
+                                                      </property>
                                                     </widget>
                                                   </item>
                                                   <item row="1" column="1">
                                                     <widget class="QComboBox" name="sampleRateBox">
-                                                      <property name="currentIndex"><number>1</number></property>
-                                                      <item><property name="text"><string>8000</string></property></item>
-                                                      <item><property name="text"><string>16000</string></property></item>
-                                                      <item><property name="text"><string>22050</string></property></item>
-                                                      <item><property name="text"><string>24000</string></property></item>
-                                                      <item><property name="text"><string>32000</string></property></item>
-                                                      <item><property name="text"><string>44100</string></property></item>
-                                                      <item><property name="text"><string>48000</string></property></item>
-                                                      <item><property name="text"><string>96000</string></property></item>
+                                                      <property name="currentIndex">
+                                                        <number>1</number>
+                                                      </property>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>8000</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>16000</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>22050</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>24000</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>32000</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>44100</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>48000</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>96000</string>
+                                                        </property>
+                                                      </item>
                                                     </widget>
                                                   </item>
                                                   <item row="0" column="2">
                                                     <widget class="QLabel" name="bitDepthBoxLabel">
-                                                      <property name="text"><string>Bit depth (PCM)</string></property>
-                                                      <property name="buddy"><cstring>bitDepthBox</cstring></property>
+                                                      <property name="text">
+                                                        <string>Bit depth (PCM)</string>
+                                                      </property>
+                                                      <property name="buddy">
+                                                        <cstring>bitDepthBox</cstring>
+                                                      </property>
                                                     </widget>
                                                   </item>
                                                   <item row="1" column="2">
                                                     <widget class="QComboBox" name="bitDepthBox">
-                                                      <property name="currentIndex"><number>1</number></property>
-                                                      <item><property name="text"><string>8</string></property></item>
-                                                      <item><property name="text"><string>16</string></property></item>
-                                                      <item><property name="text"><string>24</string></property></item>
-                                                      <item><property name="text"><string>32</string></property></item>
+                                                      <property name="currentIndex">
+                                                        <number>1</number>
+                                                      </property>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>8</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>16</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>24</string>
+                                                        </property>
+                                                      </item>
+                                                      <item>
+                                                        <property name="text">
+                                                          <string>32</string>
+                                                        </property>
+                                                      </item>
                                                     </widget>
                                                   </item>
                                                 </layout>
@@ -1177,7 +1251,7 @@ QPushButton#chooseVideoButton:disabled {background:#EDF1F2; color:#87999D; borde
                                                         <string>color:#147D72; font-weight:600;</string>
                                                       </property>
                                                       <property name="text">
-                                                        <string>Corpus format &#183; 16,000 Hz, mono, 16-bit PCM WAV. Opens in Regions after extraction.</string>
+                                                        <string>Corpus format · 16,000 Hz, mono, 16-bit PCM WAV. Opens in Regions after extraction.</string>
                                                       </property>
                                                       <property name="wordWrap">
                                                         <bool>true</bool>
@@ -1186,10 +1260,21 @@ QPushButton#chooseVideoButton:disabled {background:#EDF1F2; color:#87999D; borde
                                                   </item>
                                                   <item>
                                                     <widget class="QPushButton" name="autoProcessButton">
-                                                      <property name="minimumSize"><size><width>120</width><height>38</height></size></property>
-                                                      <property name="text"><string>Auto process</string></property>
-                                                      <property name="toolTip"><string>Extract corpus audio from the selected MP3, WAV or video, or use the loaded WAV. Label regions, generate segments, save SNR reports and transcribe all eligible clips with both models.</string></property>
-                                                      <property name="styleSheet"><string>QPushButton#autoProcessButton {background:#2563EB;color:#FFFFFF;border:0;border-radius:6px;padding:8px 14px;font-weight:600;} QPushButton#autoProcessButton:hover {background:#2159D4;} QPushButton#autoProcessButton:disabled {background:#EDF1F2;color:#87999D;}</string></property>
+                                                      <property name="minimumSize">
+                                                        <size>
+                                                          <width>120</width>
+                                                          <height>38</height>
+                                                        </size>
+                                                      </property>
+                                                      <property name="text">
+                                                        <string>Auto process</string>
+                                                      </property>
+                                                      <property name="toolTip">
+                                                        <string>Extract corpus audio from the selected MP3, WAV or video, or use the loaded WAV. Label regions, generate segments, save SNR reports, transcribe all eligible clips with both models, and automatically export a partial corpus with playable HTML (without approving pending clips).</string>
+                                                      </property>
+                                                      <property name="styleSheet">
+                                                        <string>QPushButton#autoProcessButton {background:#2563EB;color:#FFFFFF;border:0;border-radius:6px;padding:8px 14px;font-weight:600;} QPushButton#autoProcessButton:hover {background:#2159D4;} QPushButton#autoProcessButton:disabled {background:#EDF1F2;color:#87999D;}</string>
+                                                      </property>
                                                     </widget>
                                                   </item>
                                                   <item>
@@ -1219,8 +1304,18 @@ QPushButton#extractButton:disabled {background:#EDF1F2; color:#87999D; border:1p
                                         </item>
                                         <item>
                                           <widget class="QFrame" name="activityCard">
-                                            <property name="maximumSize"><size><width>16777215</width><height>270</height></size></property>
-                                            <property name="sizePolicy"><sizepolicy hsizetype="Expanding" vsizetype="Maximum"><horstretch>0</horstretch><verstretch>0</verstretch></sizepolicy></property>
+                                            <property name="maximumSize">
+                                              <size>
+                                                <width>16777215</width>
+                                                <height>270</height>
+                                              </size>
+                                            </property>
+                                            <property name="sizePolicy">
+                                              <sizepolicy hsizetype="Expanding" vsizetype="Maximum">
+                                                <horstretch>0</horstretch>
+                                                <verstretch>0</verstretch>
+                                              </sizepolicy>
+                                            </property>
                                             <property name="styleSheet">
                                               <string>QFrame#activityCard {background:#FFFFFF; border:1px solid #DDE6E8; border-radius:10px;}</string>
                                             </property>
@@ -1322,7 +1417,12 @@ QPushButton#extractButton:disabled {background:#EDF1F2; color:#87999D; border:1p
                                               </item>
                                               <item>
                                                 <widget class="QPlainTextEdit" name="activityLog">
-                                                  <property name="maximumSize"><size><width>16777215</width><height>100</height></size></property>
+                                                  <property name="maximumSize">
+                                                    <size>
+                                                      <width>16777215</width>
+                                                      <height>100</height>
+                                                    </size>
+                                                  </property>
                                                   <property name="minimumSize">
                                                     <size>
                                                       <width>0</width>
@@ -1589,7 +1689,23 @@ QPushButton#openOutputFolderButton:disabled {background:#EDF1F2; color:#87999D; 
                                     </item>
                                   </layout>
                                 </item>
-                              <item><spacer name="sourcePageBottomSpacer"><property name="orientation"><enum>Qt::Orientation::Vertical</enum></property><property name="sizeType"><enum>QSizePolicy::Policy::Expanding</enum></property><property name="sizeHint"><size><width>0</width><height>0</height></size></property></spacer></item></layout>
+                                <item>
+                                  <spacer name="sourcePageBottomSpacer">
+                                    <property name="orientation">
+                                      <enum>Qt::Orientation::Vertical</enum>
+                                    </property>
+                                    <property name="sizeType">
+                                      <enum>QSizePolicy::Policy::Expanding</enum>
+                                    </property>
+                                    <property name="sizeHint">
+                                      <size>
+                                        <width>0</width>
+                                        <height>0</height>
+                                      </size>
+                                    </property>
+                                  </spacer>
+                                </item>
+                              </layout>
                             </widget>
                             <widget class="QWidget" name="regionsPage">
                               <layout class="QVBoxLayout" name="regionsWorkspaceLayout">
@@ -1797,7 +1913,7 @@ QPushButton#saveRegions:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                 <item>
                                   <widget class="QLabel" name="regionHint">
                                     <property name="text">
-                                      <string />
+                                      <string/>
                                     </property>
                                     <property name="wordWrap">
                                       <bool>true</bool>
@@ -1815,7 +1931,7 @@ QPushButton#saveRegions:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                     <property name="frameShape">
                                       <enum>QFrame::Shape::NoFrame</enum>
                                     </property>
-                                    <layout class="QVBoxLayout" name="plotLayout" />
+                                    <layout class="QVBoxLayout" name="plotLayout"/>
                                   </widget>
                                 </item>
                                 <item>
@@ -1914,7 +2030,7 @@ QPushButton#saveRegions:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                       <string>QGroupBox#regionEditor { margin-top:0px; padding-top:12px; }</string>
                                     </property>
                                     <property name="title">
-                                      <string />
+                                      <string/>
                                     </property>
                                     <layout class="QVBoxLayout" name="regionEditorLayout">
                                       <item>
@@ -2405,7 +2521,7 @@ QPushButton#exportSegments:disabled {background:#E3E9EB; color:#61777C; border:1
                                 <item>
                                   <widget class="QLabel" name="segmentHint">
                                     <property name="text">
-                                      <string />
+                                      <string/>
                                     </property>
                                     <property name="wordWrap">
                                       <bool>true</bool>
@@ -2457,7 +2573,7 @@ QPushButton#exportSegments:disabled {background:#E3E9EB; color:#61777C; border:1
                                       <string>QGroupBox#segmentEditor { margin-top:0px; padding-top:12px; }</string>
                                     </property>
                                     <property name="title">
-                                      <string />
+                                      <string/>
                                     </property>
                                     <layout class="QVBoxLayout" name="segmentEditorLayout">
                                       <item>
@@ -2680,8 +2796,10 @@ QPushButton#approveAllSegments:disabled {background:#E3E9EB; color:#61777C; bord
                                               <property name="text">
                                                 <string>Approve all segments</string>
                                               </property>
-                                            <property name="toolTip"><string>Approve every pending candidate after listening to its boundaries. Records your reviewer name on each approval.</string></property>
-                                      </widget>
+                                              <property name="toolTip">
+                                                <string>Approve every pending 5–15 s candidate with valid continuous source mapping after checking its boundaries, including boundary-review candidates after one batch confirmation.</string>
+                                              </property>
+                                            </widget>
                                           </item>
                                         </layout>
                                       </item>
@@ -2842,7 +2960,7 @@ QPushButton#approveAllSegments:disabled {background:#E3E9EB; color:#61777C; bord
                                 <item>
                                   <widget class="QLabel" name="unresolvedHeading">
                                     <property name="text">
-                                      <string>Unresolved spans and uncovered gaps · Shift-select neighboring rows to listen and add one continuous clip</string>
+                                      <string>Unresolved spans · estimated gaps hidden (retained in audit) · Shift-select neighboring rows to add one continuous clip</string>
                                     </property>
                                     <property name="wordWrap">
                                       <bool>true</bool>
@@ -3032,7 +3150,9 @@ QPushButton#toggleSpanAsr:disabled {background:#E3E9EB; color:#61777C; border:1p
                                         <property name="text">
                                           <string>Skip transcription</string>
                                         </property>
-                                      <property name="toolTip"><string>Toggle transcription for the selected unresolved row. It remains available for segment review and SNR.</string></property>
+                                        <property name="toolTip">
+                                          <string>Toggle transcription for the selected unresolved row. It remains available for segment review and SNR.</string>
+                                        </property>
                                       </widget>
                                     </item>
                                   </layout>
@@ -3431,7 +3551,7 @@ QPushButton#openSNRReport:disabled {background:#E3E9EB; color:#61777C; border:1p
                                 <item>
                                   <widget class="QGroupBox" name="overrideGroup">
                                     <property name="title">
-                                      <string />
+                                      <string/>
                                     </property>
                                     <layout class="QVBoxLayout" name="overrideGroupLayout">
                                       <item>
@@ -3515,7 +3635,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                     <property name="frameShape">
                                       <enum>QFrame::Shape::NoFrame</enum>
                                     </property>
-                                    <layout class="QVBoxLayout" name="histogramLayout" />
+                                    <layout class="QVBoxLayout" name="histogramLayout"/>
                                   </widget>
                                 </item>
                               </layout>
@@ -3538,7 +3658,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                 <item>
                                   <widget class="QLabel" name="asrIntro">
                                     <property name="text">
-                                      <string>Both models transcribe approved speech/mixed clips and unresolved spans that may contain speech. The Segmentation column tracks boundary approval separately from transcript agreement. When both transcripts contain text and normalized CER is at most 4%, Cohere supplies the final text. Otherwise, listen and choose or edit within the word limit. More edits mark the transcript difficult. The limit is 4 edits, plus 1 for every full 5 seconds beyond 15 seconds on unresolved spans. Model agreement is not verified transcription accuracy.</string>
+                                      <string>Both models transcribe approved speech/mixed clips and unresolved spans that may contain speech. The Segmentation column tracks boundary approval separately from transcript agreement. When both transcripts contain text and normalized CER is at most 5%, Cohere supplies the final text. Otherwise, listen and choose or edit within the word limit. More edits mark the transcript difficult. The limit is 5 edits, plus 1 for every full second beyond 15 seconds on unresolved spans. Model agreement is not verified transcription accuracy.</string>
                                     </property>
                                     <property name="wordWrap">
                                       <bool>true</bool>
@@ -3733,7 +3853,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                       <string>QGroupBox#transcriptEditor {margin-top:0px;padding-top:10px;}</string>
                                     </property>
                                     <property name="title">
-                                      <string />
+                                      <string/>
                                     </property>
                                     <layout class="QVBoxLayout" name="transcriptEditorLayout">
                                       <item>
@@ -3746,6 +3866,19 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                           </property>
                                           <property name="wordWrap">
                                             <bool>true</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <widget class="QLabel" name="asrSelectedStatus">
+                                          <property name="text">
+                                            <string>Segment — · Transcription status: —</string>
+                                          </property>
+                                          <property name="wordWrap">
+                                            <bool>true</bool>
+                                          </property>
+                                          <property name="styleSheet">
+                                            <string>font-size:17px;font-weight:700;color:#173B40;</string>
                                           </property>
                                         </widget>
                                       </item>
@@ -4059,6 +4192,22 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                                 </property>
                                               </widget>
                                             </item>
+                                            <item row="0" column="2">
+                                              <widget class="QPushButton" name="asrNextSegment">
+                                                <property name="styleSheet">
+                                                  <string>QPushButton#asrNextSegment {background:#475569;color:white;border:1px solid #475569;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#asrNextSegment:hover {background:#404C5E;} QPushButton#asrNextSegment:pressed {background:#394454;} QPushButton#asrNextSegment:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#asrNextSegment:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
+                                                </property>
+                                                <property name="text">
+                                                  <string>Next segment →</string>
+                                                </property>
+                                                <property name="toolTip">
+                                                  <string>Move to the next row without changing its review decision. Existing draft text is saved before moving.</string>
+                                                </property>
+                                                <property name="enabled">
+                                                  <bool>false</bool>
+                                                </property>
+                                              </widget>
+                                            </item>
                                           </layout>
                                         </widget>
                                       </item>
@@ -4068,7 +4217,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                               </layout>
                             </widget>
                             <widget class="QWidget" name="reviewPage">
-                              <layout class="QVBoxLayout" name="reviewPageLayout">
+                              <layout class="QVBoxLayout" name="reviewPageLayout" stretch="0,0,1,0,0,0,0,0">
                                 <item>
                                   <widget class="QLabel" name="reviewPageTitle">
                                     <property name="styleSheet">
@@ -4085,7 +4234,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                 <item>
                                   <widget class="QLabel" name="finalIntro">
                                     <property name="text">
-                                      <string>Review changes are recorded with your reviewer name. Moving/splitting/merging audio clears its old transcripts and SNR. Keep 5–15 second clips and re-run the affected steps.</string>
+                                      <string>Review the selected final transcript and listen to the clip. Make transcript changes on Transcription, boundary changes on Segmenting the Speech, and quality changes on Audio Quality SNR. Save or export your results here.</string>
                                     </property>
                                     <property name="wordWrap">
                                       <bool>true</bool>
@@ -4100,196 +4249,123 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                         <height>210</height>
                                       </size>
                                     </property>
-                                    <column><property name="text"><string>start</string></property></column>
-                                    <column><property name="text"><string>end</string></property></column>
-                                    <column><property name="text"><string>label</string></property></column>
-                                    <column><property name="text"><string>snr</string></property></column>
-                                    <column><property name="text"><string>quality</string></property></column>
-                                    <column><property name="text"><string>model_A_transcript</string></property></column>
-                                    <column><property name="text"><string>model_B_transcript</string></property></column>
-                                    <column><property name="text"><string>final_transcript</string></property></column>
-                                    <column><property name="text"><string>status</string></property></column>
-                                    <column><property name="text"><string>review_status</string></property></column>
-                                    <column><property name="text"><string>automatic_status</string></property></column>
-                                    <column><property name="text"><string>segment_id</string></property></column>
-                                    <column><property name="text"><string>audio_file</string></property></column>
-                                    <column><property name="text"><string>changed_by</string></property></column>
-                                    <column><property name="text"><string>changed_at</string></property></column>
-                                    <column><property name="text"><string>change_log</string></property></column>
-                                    <column><property name="text"><string>segmentation_status</string></property></column>
+                                    <column>
+                                      <property name="text">
+                                        <string>start</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>end</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>label</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>snr</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>quality</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>model_A_transcript</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>model_B_transcript</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>final_transcript</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>status</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>review_status</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>automatic_status</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>segment_id</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>audio_file</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>changed_by</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>changed_at</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>change_log</string>
+                                      </property>
+                                    </column>
+                                    <column>
+                                      <property name="text">
+                                        <string>segmentation_status</string>
+                                      </property>
+                                    </column>
                                   </widget>
                                 </item>
                                 <item>
-                                  <widget class="QGroupBox" name="finalEditor">
-                                    <property name="styleSheet">
-                                      <string>QGroupBox#finalEditor {margin-top:0px;padding-top:10px;}</string>
-                                    </property>
+                                  <widget class="QGroupBox" name="finalTranscriptViewer">
                                     <property name="title">
-                                      <string />
+                                      <string></string>
                                     </property>
-                                    <layout class="QVBoxLayout" name="finalEditorLayout">
+                                    <property name="styleSheet">
+                                      <string>QGroupBox#finalTranscriptViewer {margin-top:0px;padding-top:10px;}</string>
+                                    </property>
+                                    <layout class="QVBoxLayout" name="finalTranscriptViewerLayout">
                                       <item>
-                                        <widget class="QLabel" name="finalEditorHeading">
-                                          <property name="styleSheet">
-                                            <string>font-size:20px;font-weight:700;</string>
-                                          </property>
+                                        <widget class="QLabel" name="finalTranscriptHeading">
                                           <property name="text">
-                                            <string>Final segment review</string>
+                                            <string>Final transcript</string>
                                           </property>
                                           <property name="wordWrap">
                                             <bool>true</bool>
                                           </property>
-                                        </widget>
-                                      </item>
-                                      <item>
-                                        <widget class="QFrame" name="finalTimeRow">
-                                          <property name="frameShape">
-                                            <enum>QFrame::Shape::NoFrame</enum>
+                                          <property name="styleSheet">
+                                            <string>font-size:20px;font-weight:700;</string>
                                           </property>
-                                          <layout class="QGridLayout" name="finalTimeRowLayout">
-                                            <item row="0" column="0">
-                                              <widget class="QLabel" name="finalStartLabel">
-                                                <property name="text">
-                                                  <string>Source start (s)</string>
-                                                </property>
-                                                <property name="wordWrap">
-                                                  <bool>true</bool>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="1">
-                                              <widget class="QDoubleSpinBox" name="finalStart">
-                                                <property name="decimals">
-                                                  <number>4</number>
-                                                </property>
-                                                <property name="maximum">
-                                                  <double>999999.000000000000000</double>
-                                                </property>
-                                                <property name="value">
-                                                  <double>0.000000000000000</double>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="2">
-                                              <widget class="QLabel" name="finalEndLabel">
-                                                <property name="text">
-                                                  <string>Source end (s)</string>
-                                                </property>
-                                                <property name="wordWrap">
-                                                  <bool>true</bool>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="3">
-                                              <widget class="QDoubleSpinBox" name="finalEnd">
-                                                <property name="decimals">
-                                                  <number>4</number>
-                                                </property>
-                                                <property name="maximum">
-                                                  <double>999999.000000000000000</double>
-                                                </property>
-                                                <property name="value">
-                                                  <double>0.000000000000000</double>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                          </layout>
                                         </widget>
                                       </item>
                                       <item>
                                         <widget class="QLabel" name="finalMapping">
                                           <property name="text">
-                                            <string>Joined clips keep multiple source spans unless source times are changed.</string>
+                                            <string>Select a segment to review its final transcript.</string>
                                           </property>
                                           <property name="wordWrap">
                                             <bool>true</bool>
                                           </property>
-                                        </widget>
-                                      </item>
-                                      <item>
-                                        <widget class="QFrame" name="finalLabelsRow">
-                                          <property name="frameShape">
-                                            <enum>QFrame::Shape::NoFrame</enum>
-                                          </property>
-                                          <layout class="QGridLayout" name="finalLabelsRowLayout">
-                                            <item row="0" column="0">
-                                              <widget class="QComboBox" name="finalLabel">
-                                                <item>
-                                                  <property name="text">
-                                                    <string>speech</string>
-                                                  </property>
-                                                </item>
-                                                <item>
-                                                  <property name="text">
-                                                    <string>mixed</string>
-                                                  </property>
-                                                </item>
-                                                <item>
-                                                  <property name="text">
-                                                    <string>music</string>
-                                                  </property>
-                                                </item>
-                                                <item>
-                                                  <property name="text">
-                                                    <string>silence</string>
-                                                  </property>
-                                                </item>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="1">
-                                              <widget class="QComboBox" name="finalQuality">
-                                                <item>
-                                                  <property name="text">
-                                                    <string>clean</string>
-                                                  </property>
-                                                </item>
-                                                <item>
-                                                  <property name="text">
-                                                    <string>noisy</string>
-                                                  </property>
-                                                </item>
-                                                <item>
-                                                  <property name="text">
-                                                    <string>unavailable</string>
-                                                  </property>
-                                                </item>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="2">
-                                              <widget class="QComboBox" name="finalStatus">
-                                                <item>
-                                                  <property name="text">
-                                                    <string>accepted</string>
-                                                  </property>
-                                                </item>
-                                                <item>
-                                                  <property name="text">
-                                                    <string>needs_review</string>
-                                                  </property>
-                                                </item>
-                                                <item>
-                                                  <property name="text">
-                                                    <string>difficult</string>
-                                                  </property>
-                                                </item>
-                                                <item>
-                                                  <property name="text">
-                                                    <string>not_applicable</string>
-                                                  </property>
-                                                </item>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="3">
-                                              <widget class="QPushButton" name="finalPlay">
-                                                <property name="styleSheet">
-                                                  <string>QPushButton#finalPlay {background:#157A6E;color:white;border:1px solid #157A6E;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalPlay:hover {background:#136E63;} QPushButton#finalPlay:pressed {background:#116258;} QPushButton#finalPlay:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalPlay:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
-                                                </property>
-                                                <property name="text">
-                                                  <string>Play final clip</string>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                          </layout>
                                         </widget>
                                       </item>
                                       <item>
@@ -4307,115 +4383,30 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                             <string>font-family:"Segoe UI";font-size:17px;</string>
                                           </property>
                                           <property name="readOnly">
-                                            <bool>false</bool>
-                                          </property>
-                                        </widget>
-                                      </item>
-                                      <item>
-                                        <widget class="QLineEdit" name="finalReason">
-                                          <property name="text">
-                                            <string />
+                                            <bool>true</bool>
                                           </property>
                                           <property name="placeholderText">
-                                            <string>Reason for the change (required for manual quality changes)</string>
+                                            <string>No final transcript selected.</string>
                                           </property>
                                         </widget>
                                       </item>
                                       <item>
-                                        <widget class="QFrame" name="finalEditActions">
-                                          <property name="frameShape">
-                                            <enum>QFrame::Shape::NoFrame</enum>
-                                          </property>
-                                          <layout class="QGridLayout" name="finalEditActionsLayout">
-                                            <item row="0" column="0">
-                                              <widget class="QPushButton" name="finalApply">
+                                        <widget class="QFrame" name="finalViewerActions">
+                                          <layout class="QHBoxLayout" name="finalViewerActionsLayout">
+                                            <item>
+                                              <widget class="QPushButton" name="finalPlay">
                                                 <property name="styleSheet">
-                                                  <string>QPushButton#finalApply {background:#D97706;color:white;border:1px solid #D97706;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalApply:hover {background:#C36B05;} QPushButton#finalApply:pressed {background:#AE5F05;} QPushButton#finalApply:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalApply:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
+                                                  <string>QPushButton#finalPlay {background:#157A6E;color:white;border:1px solid #157A6E;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalPlay:hover {background:#136E63;} QPushButton#finalPlay:pressed {background:#116258;} QPushButton#finalPlay:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalPlay:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
                                                 </property>
                                                 <property name="text">
-                                                  <string>Apply final edit</string>
+                                                  <string>Play final clip</string>
                                                 </property>
                                               </widget>
                                             </item>
-                                            <item row="0" column="1">
-                                              <widget class="QLabel" name="splitPositionLabel">
-                                                <property name="text">
-                                                  <string>Split position in clip (s)</string>
-                                                </property>
-                                                <property name="wordWrap">
-                                                  <bool>true</bool>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="2">
-                                              <widget class="QDoubleSpinBox" name="finalSplitPosition">
-                                                <property name="decimals">
-                                                  <number>4</number>
-                                                </property>
-                                                <property name="maximum">
-                                                  <double>999999.000000000000000</double>
-                                                </property>
-                                                <property name="value">
-                                                  <double>5.000000000000000</double>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="3">
-                                              <widget class="QPushButton" name="finalSplit">
-                                                <property name="styleSheet">
-                                                  <string>QPushButton#finalSplit {background:#475569;color:white;border:1px solid #475569;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalSplit:hover {background:#404C5E;} QPushButton#finalSplit:pressed {background:#394454;} QPushButton#finalSplit:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalSplit:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
-                                                </property>
-                                                <property name="text">
-                                                  <string>Split clip</string>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                          </layout>
-                                        </widget>
-                                      </item>
-                                      <item>
-                                        <widget class="QFrame" name="finalStructureActions">
-                                          <property name="frameShape">
-                                            <enum>QFrame::Shape::NoFrame</enum>
-                                          </property>
-                                          <layout class="QGridLayout" name="finalStructureActionsLayout">
-                                            <item row="0" column="0">
-                                              <widget class="QPushButton" name="finalMerge">
-                                                <property name="styleSheet">
-                                                  <string>QPushButton#finalMerge {background:#7C3AED;color:white;border:1px solid #7C3AED;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalMerge:hover {background:#7034D5;} QPushButton#finalMerge:pressed {background:#632EBE;} QPushButton#finalMerge:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalMerge:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
-                                                </property>
-                                                <property name="text">
-                                                  <string>Merge selected</string>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="1">
-                                              <widget class="QPushButton" name="finalAdd">
-                                                <property name="styleSheet">
-                                                  <string>QPushButton#finalAdd {background:#2563EB;color:white;border:1px solid #2563EB;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalAdd:hover {background:#2159D4;} QPushButton#finalAdd:pressed {background:#1E4FBC;} QPushButton#finalAdd:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalAdd:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
-                                                </property>
-                                                <property name="text">
-                                                  <string>Add source range as clip</string>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="2">
-                                              <widget class="QPushButton" name="finalDelete">
-                                                <property name="styleSheet">
-                                                  <string>QPushButton#finalDelete {background:#C83E3B;color:white;border:1px solid #C83E3B;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalDelete:hover {background:#B43835;} QPushButton#finalDelete:pressed {background:#A0322F;} QPushButton#finalDelete:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalDelete:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
-                                                </property>
-                                                <property name="text">
-                                                  <string>Delete selected</string>
-                                                </property>
-                                              </widget>
-                                            </item>
-                                            <item row="0" column="3">
+                                            <item>
                                               <widget class="QPushButton" name="finalToASR">
-                                                <property name="styleSheet">
-                                                  <string>QPushButton#finalToASR {background:#4F46E5;color:white;border:1px solid #4F46E5;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalToASR:hover {background:#473FCE;} QPushButton#finalToASR:pressed {background:#3F38B7;} QPushButton#finalToASR:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalToASR:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
-                                                </property>
                                                 <property name="text">
-                                                  <string>Re-transcribe changed clips →</string>
+                                                  <string>Back to Transcription</string>
                                                 </property>
                                               </widget>
                                             </item>
@@ -4432,47 +4423,16 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                     </property>
                                     <layout class="QGridLayout" name="finalExportActionsLayout">
                                       <item row="0" column="0">
-                                        <widget class="QLabel" name="finalThresholdLabel">
-                                          <property name="text">
-                                            <string>SNR threshold (dB)</string>
-                                          </property>
-                                          <property name="wordWrap">
-                                            <bool>true</bool>
-                                          </property>
-                                        </widget>
-                                      </item>
-                                      <item row="0" column="1">
-                                        <widget class="QDoubleSpinBox" name="finalSNRThreshold">
-                                          <property name="decimals">
-                                            <number>4</number>
-                                          </property>
-                                          <property name="maximum">
-                                            <double>100.000000000000000</double>
-                                          </property>
-                                          <property name="value">
-                                            <double>20.000000000000000</double>
-                                          </property>
-                                        </widget>
-                                      </item>
-                                      <item row="0" column="2">
-                                        <widget class="QPushButton" name="finalRecalculate">
-                                          <property name="styleSheet">
-                                            <string>QPushButton#finalRecalculate {background:#475569;color:white;border:1px solid #475569;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalRecalculate:hover {background:#404C5E;} QPushButton#finalRecalculate:pressed {background:#394454;} QPushButton#finalRecalculate:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalRecalculate:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
-                                          </property>
-                                          <property name="text">
-                                            <string>Recalculate selected SNR</string>
-                                          </property>
-                                        </widget>
-                                      </item>
-                                      <item row="1" column="2">
                                         <widget class="QPushButton" name="finalSaveReview">
                                           <property name="styleSheet">
                                             <string>QPushButton#finalSaveReview {background:#2563EB;color:white;border:0;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalSaveReview:hover {background:#2159D4;} QPushButton#finalSaveReview:disabled {background:#E3E9EB;color:#61777C;}</string>
                                           </property>
-                                          <property name="text"><string>Save review table</string></property>
+                                          <property name="text">
+                                            <string>Save review table</string>
+                                          </property>
                                         </widget>
                                       </item>
-                                      <item row="0" column="3">
+                                      <item row="0" column="1">
                                         <widget class="QPushButton" name="finalExport">
                                           <property name="styleSheet">
                                             <string>QPushButton#finalExport {background:#0F766E;color:white;border:1px solid #0F766E;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#finalExport:hover {background:#0E6A63;} QPushButton#finalExport:pressed {background:#0C5E58;} QPushButton#finalExport:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#finalExport:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
@@ -4494,36 +4454,116 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                                 </item>
                                 <item>
                                   <widget class="QGroupBox" name="processSummaryBox">
-                                    <property name="title"><string /></property>
-                                    <property name="styleSheet"><string>QGroupBox#processSummaryBox {margin-top:0px;padding-top:10px;}</string></property>
+                                    <property name="title">
+                                      <string/>
+                                    </property>
+                                    <property name="styleSheet">
+                                      <string>QGroupBox#processSummaryBox {margin-top:0px;padding-top:10px;}</string>
+                                    </property>
                                     <layout class="QVBoxLayout" name="processSummaryLayout">
-                                      <item><widget class="QLabel" name="processSummaryHeading">
-                                        <property name="text"><string>Summary of the process</string></property>
-                                        <property name="styleSheet"><string>font-size:20px;font-weight:700;</string></property>
-                                        <property name="wordWrap"><bool>true</bool></property>
-                                      </widget></item>
                                       <item>
-                                        <widget class="QTableWidget" name="processSummaryTable">
-                                          <property name="minimumHeight"><number>110</number></property>
-                                          <property name="maximumHeight"><number>140</number></property>
-                                          <property name="editTriggers"><set>QAbstractItemView::EditTrigger::NoEditTriggers</set></property>
-                                      <column><property name="text"><string>Video</string></property></column>
-                                      <column><property name="text"><string>Duration</string></property></column>
-                                      <column><property name="text"><string>Speech</string></property></column>
-                                      <column><property name="text"><string>Music</string></property></column>
-                                      <column><property name="text"><string>Mixed</string></property></column>
-                                      <column><property name="text"><string>Segments</string></property></column>
-                                      <column><property name="text"><string>Mean SNR</string></property></column>
-                                      <column><property name="text"><string>Accepted</string></property></column>
-                                      <column><property name="text"><string>Chosen by hand</string></property></column>
-                                      <column><property name="text"><string>Difficult</string></property></column>
+                                        <widget class="QLabel" name="processSummaryHeading">
+                                          <property name="text">
+                                            <string>Summary of the process</string>
+                                          </property>
+                                          <property name="styleSheet">
+                                            <string>font-size:20px;font-weight:700;</string>
+                                          </property>
+                                          <property name="wordWrap">
+                                            <bool>true</bool>
+                                          </property>
                                         </widget>
                                       </item>
-                                      <item><widget class="QLabel" name="processSummaryNote"><property name="wordWrap"><bool>true</bool></property></widget></item>
-                                      <item><widget class="QPushButton" name="saveProcessSummary">
-                                        <property name="text"><string>Save summary to Excel</string></property>
-                                        <property name="styleSheet"><string>QPushButton#saveProcessSummary {background:#157A6E; color:white; border:0; border-radius:6px; padding:8px 12px; font-weight:600;} QPushButton#saveProcessSummary:hover {background:#136E63;}</string></property>
-                                      </widget></item>
+                                      <item>
+                                        <widget class="QTableWidget" name="processSummaryTable">
+                                          <property name="minimumHeight">
+                                            <number>110</number>
+                                          </property>
+                                          <property name="maximumHeight">
+                                            <number>140</number>
+                                          </property>
+                                          <property name="editTriggers">
+                                            <set>QAbstractItemView::EditTrigger::NoEditTriggers</set>
+                                          </property>
+                                          <column>
+                                            <property name="text">
+                                              <string>Video</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Duration</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Speech</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Music</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Mixed</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Segments</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Mean SNR</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Accepted</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Chosen by hand</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Difficult</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Segmented voice (s)</string>
+                                            </property>
+                                          </column>
+                                          <column>
+                                            <property name="text">
+                                              <string>Not segmented voice (s)</string>
+                                            </property>
+                                          </column>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <widget class="QLabel" name="processSummaryNote">
+                                          <property name="wordWrap">
+                                            <bool>true</bool>
+                                          </property>
+                                        </widget>
+                                      </item>
+                                      <item>
+                                        <widget class="QPushButton" name="saveProcessSummary">
+                                          <property name="text">
+                                            <string>Save summary to Excel</string>
+                                          </property>
+                                          <property name="styleSheet">
+                                            <string>QPushButton#saveProcessSummary {background:#157A6E; color:white; border:0; border-radius:6px; padding:8px 12px; font-weight:600;} QPushButton#saveProcessSummary:hover {background:#136E63;}</string>
+                                          </property>
+                                        </widget>
+                                      </item>
                                     </layout>
                                   </widget>
                                 </item>
@@ -4612,7 +4652,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
         </item>
       </layout>
     </widget>
-    <widget class="QStatusBar" name="statusbar" />
+    <widget class="QStatusBar" name="statusbar"/>
   </widget>
   <tabstops>
     <tabstop>navigationList</tabstop>
@@ -4633,7 +4673,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
     <tabstop>openReportButton</tabstop>
     <tabstop>openOutputFolderButton</tabstop>
   </tabstops>
-  <resources />
+  <resources/>
   <connections>
     <connection>
       <sender>navigationList</sender>

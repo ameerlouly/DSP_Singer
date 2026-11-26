@@ -1,8 +1,8 @@
 """Let the reviewer listen, compare model outputs and decide what text to keep.
 
 ASRWorkspace starts transcription and updates each row as results arrive. Its commit
-methods save typed edits before the user switches clips. The final review controls
-also handle clip edits, summary workbooks and corpus export.
+methods save typed edits before the user switches clips. Final review is read-only
+and handles playback, summary workbooks and corpus export.
 """
 
 from output_folders import metadata_folder, new_run_folder, save_dialog_folder, step_folder
@@ -34,7 +34,7 @@ class ASRWorkspace(QObject):
         self.transcribe_after_sync=None
         self.stop_event=threading.Event();self.asr_running=False;self.autosave_path=None
         self.current_asr=None;self.current_final=None
-        self.transcript_draft=False;self.final_draft=False
+        self.transcript_draft=False
         self.playback_dir=tempfile.TemporaryDirectory(prefix='speech_corpus_play_')
         self.p.table(self.ui.asrTable);self.p.table(self.ui.finalTable);self.p.table(self.ui.processSummaryTable)
         header = self.ui.finalTable.horizontalHeader()
@@ -49,18 +49,14 @@ class ASRWorkspace(QObject):
         self.ui.asrTable.itemSelectionChanged.connect(self.select_asr)
         self.ui.finalTable.itemSelectionChanged.connect(self.select_final)
         self.ui.asrFinalText.textChanged.connect(self.mark_transcript_draft)
-        self.ui.finalText.textChanged.connect(self.mark_final_draft)
-        for control in (self.ui.finalStart,self.ui.finalEnd):control.valueChanged.connect(self.mark_final_draft)
-        for control in (self.ui.finalLabel,self.ui.finalQuality,self.ui.finalStatus):control.currentIndexChanged.connect(self.mark_final_draft)
         actions={
             'asrSync':self.sync_current,'asrSelected':lambda:self.transcribe(True),'asrPending':lambda:self.transcribe(False),
             'asrOpenSession':self.p.open_project,'asrPlay':lambda:self.play_table(self.ui.asrTable),
             'asrUseA':lambda:self.choose('a'),'asrUseB':lambda:self.choose('b'),
             'asrAccept':lambda:self.commit_transcript('accepted'),'asrDifficult':lambda:self.commit_transcript('difficult'),
             'asrGoReview':lambda:self.w.navigationList.setCurrentRow(5),'finalToASR':lambda:self.w.navigationList.setCurrentRow(4),
-            'finalApply':self.commit_final,'finalPlay':lambda:self.play_table(self.ui.finalTable),
-            'finalSplit':self.split,'finalMerge':self.merge,'finalAdd':self.add,'finalDelete':self.delete,
-            'finalRecalculate':self.recalculate,'finalExport':self.export,'finalSaveReview':self.save_review,
+            'asrNextSegment':self.next_segment,'finalPlay':lambda:self.play_table(self.ui.finalTable),
+            'finalExport':self.export,'finalSaveReview':self.save_review,
             'saveProcessSummary':self.save_process_summary,
         }
         for name,action in actions.items():getattr(self.ui,name).clicked.connect(lambda checked=False,a=action:self.p.guard(a))
@@ -73,8 +69,6 @@ class ASRWorkspace(QObject):
 
     # Remember that the text on the transcription page has unsaved edits.
     def mark_transcript_draft(self):self.transcript_draft=True;self.p.dirty=True
-    # Remember that the user changed something on the final review page.
-    def mark_final_draft(self,*args):self.final_draft=True;self.p.dirty=True
 
     # Set the displayed text without counting it as an edit by the reviewer.
     def set_text(self,widget,text):
@@ -83,13 +77,17 @@ class ASRWorkspace(QObject):
     # Drop the loaded records and reset both review pages.
     def clear(self):
         self.records=[];self.audit_log=[];self.signature=None;self.source_metadata={}
-        self.current_asr=self.current_final=None;self.transcript_draft=self.final_draft=False
+        self.current_asr=self.current_final=None;self.transcript_draft=False
         self.clear_editors()
         self.refresh()
 
     # Empty the text fields so they don't show words from the previous selection.
     def clear_editors(self):
         for widget in (self.ui.asrTextA,self.ui.asrTextB,self.ui.asrNormalizedA,self.ui.asrNormalizedB,self.ui.asrFinalText,self.ui.finalText):self.set_text(widget,'')
+        self.ui.asrSelectedStatus.setText('Segment — · Transcription status: —')
+        self.ui.asrNextSegment.setEnabled(False)
+        self.ui.finalMapping.setText('Select a segment to review its final transcript.')
+        self.ui.finalPlay.setEnabled(False)
         self.ui.asrComparison.setText('Select a clip to compare its transcripts.')
         self.ui.asrCerA.setText('Qwen CER vs Cohere (normalized): —')
         self.ui.asrCerB.setText('Cohere CER vs Qwen (normalized): —')
@@ -175,7 +173,7 @@ class ASRWorkspace(QObject):
         if not fresh:
             self.clear_editors()
         self.records=fresh;self.signature=signature;self.source_metadata=metadata
-        self.current_asr=self.current_final=None;self.transcript_draft=self.final_draft=False
+        self.current_asr=self.current_final=None;self.transcript_draft=False
         self.p.dirty=True;self.refresh()
         if self.ui.asrTable.rowCount():
             self.ui.asrTable.selectRow(0)
@@ -250,6 +248,9 @@ class ASRWorkspace(QObject):
         self.p.populate(self.ui.finalTable,[self.review_cells(row)
                         for row in corpus.review_rows(self.final_records(), self.audit_log)])
         self.refresh_summary()
+        rows=self.p.selected(self.ui.asrTable)
+        self.ui.asrNextSegment.setEnabled(bool(self.records) and (not rows or rows[-1] < len(self.records)-1))
+        self.select_final()
 
     # Format times, completion flags and agreement scores for the transcription table.
     @staticmethod
@@ -273,6 +274,7 @@ class ASRWorkspace(QObject):
         self.review_pending.add(row)
         if self.ui.pages.currentIndex()==5:
             self.flush_review_rows()
+            self.select_final()
 
     # Paint the rows that changed, then refresh the totals once.
     def flush_review_rows(self):
@@ -290,8 +292,10 @@ class ASRWorkspace(QObject):
         final_rows=self.final_records()
         counts={s:sum(r['status']==s for r in final_rows) for s in ['accepted','needs_review','difficult','not_applicable']}
         self.ui.finalSummary.setText('Clips: '+str(len(final_rows))+' · '+' · '.join(f'{k}: {v}' for k,v in counts.items()))
-        summary = corpus.process_summary(self.p.duration or 0, self.p.regions, self.records, self.audit_log)
+        summary = corpus.process_summary(self.p.duration or 0, self.p.regions, self.records, self.audit_log, session=self.p.session)
         regions = summary['region_seconds']
+        coverage = summary['segmentation_coverage']['voice']
+        speech = summary['segmentation_coverage']['speech_only']
         # Show source time in minutes with two decimal places.
         def minute(value): return f'{value / 60:.2f} min'
         # Use the eligible ASR clips as the denominator for this percentage.
@@ -302,9 +306,16 @@ class ASRWorkspace(QObject):
         values = [video_name, minute(summary['duration']), minute(regions['speech']), minute(regions['music']),
                   minute(regions['mixed']), str(summary['segments']), snr_value,
                   percent_count(summary['counts']['accepted']), percent_count(summary['counts']['chosen']),
-                  percent_count(summary['counts']['difficult'])]
+                  percent_count(summary['counts']['difficult']),
+                  f"{coverage['segmented']:.2f} s", f"{coverage['not_segmented']:.2f} s"]
         self.p.populate(self.ui.processSummaryTable, [values])
+        coverage_percent = '—' if coverage['fraction'] is None else f"{coverage['fraction'] * 100:.1f}%"
         self.ui.processSummaryNote.setText(
+            f"Part 4 coverage: {coverage['segmented']:.2f} / {coverage['total']:.2f} s of speech + mixed "
+            f"({coverage_percent}); {coverage['not_segmented']:.2f} s not segmented. "
+            f"Speech only: {speech['segmented']:.2f} / {speech['total']:.2f} s segmented; "
+            f"{speech['not_segmented']:.2f} s not segmented. Includes pending and approved candidates, "
+            "not excluded clips; silence/music and duplicate coverage are not counted.\n"
             f"Includes {summary['unresolved']} unresolved spans. ASR outcomes use {summary['asr_total']} eligible items; "
             f"{summary['pending']} pending. Mean SNR uses {summary['snr_count']} available values.")
 
@@ -319,7 +330,10 @@ class ASRWorkspace(QObject):
     # Show the model texts for the clip the reviewer selected.
     def select_asr(self):
         rows=self.p.selected(self.ui.asrTable)
-        if len(rows)!=1:return
+        self.ui.asrNextSegment.setEnabled(bool(self.records) and (not rows or rows[-1] < len(self.records)-1))
+        if len(rows)!=1 or rows[0]>=len(self.records):
+            self.ui.asrSelectedStatus.setText('Select one segment to see its transcription status.')
+            return
         if self.transcript_draft and self.current_asr:
             try:self.commit_transcript('accepted' if self.ui.asrFinalText.toPlainText().strip() else 'needs_review',refresh=False)
             except Exception as exc:QMessageBox.warning(self.w,'Save transcript first',str(exc));return
@@ -330,10 +344,30 @@ class ASRWorkspace(QObject):
         self.transcript_draft=False
         self.show_comparison(r)
 
+    def next_segment(self):
+        """Advance in table order, preserving the existing draft-saving behavior."""
+        table=self.ui.asrTable
+        rows=self.p.selected(table)
+        target=rows[-1]+1 if rows else 0
+        if target >= len(self.records):
+            self.p.status('Last segment reached.')
+            return
+        # Commit before moving so a failed draft save cannot change selection.
+        self.commit_drafts()
+        table.clearSelection()
+        table.selectRow(target)
+        cell=table.item(target,0)
+        if cell is not None:table.scrollToItem(cell)
+
     # Display the normalized comparison beside the raw words and the reason for the decision.
     def show_comparison(self,r):
         fmt=lambda v:'—' if v is None else f'{v:.3f}'
         percent=lambda v:'—' if v is None else f'{v:.2%}'
+        index=self.row_by_id.get(r['segment_id'])
+        position=f'{index+1}/{len(self.records)}' if index is not None else '—'
+        status=r.get('status','needs_review').replace('_',' ').title()
+        boundary=r.get('segmentation_status','unresolved' if corpus.is_preview(r) else 'resolved').replace('_',' ').title()
+        self.ui.asrSelectedStatus.setText(f"Segment {position} · {r['segment_id']} · Transcription status: {status} · Segmentation: {boundary}")
         rule_cer=r.get('cer') if r.get('normalized_transcript_a') and r.get('normalized_transcript_b') else None
         self.ui.asrComparison.setText(f"Current decision: {r['status']} · Rule CER (B vs A): {percent(rule_cer)} · WER: {percent(r.get('wer'))} · word edits: {r.get('word_difference')} · Review limit: {r.get('review_word_edit_limit') or '—'} word edits · A score: {fmt(r.get('confidence_a'))} · B score: {fmt(r.get('confidence_b'))}")
         self.ui.asrCerA.setText('Qwen CER vs Cohere (normalized): '+percent(r.get('cer_a_vs_b')))
@@ -341,24 +375,21 @@ class ASRWorkspace(QObject):
         self.ui.asrAutomaticChoice.setText(f"Automatic decision before human editing: {r.get('automatic_status','needs_review')}")
         self.ui.asrAutomaticReason.setText(r.get('agreement_reason','Waiting for both ASR attempts.'))
 
-    # Show this clip's final text, fields and source times in the editor.
+    # Display final text only; selecting a row cannot modify the record.
     def select_final(self):
         rows=self.p.selected(self.ui.finalTable)
-        if len(rows)!=1:return
-        if self.final_draft and self.current_final:
-            try:self.commit_final(refresh=False)
-            except Exception as exc:QMessageBox.warning(self.w,'Save final edit first',str(exc));return
+        if len(rows)!=1 or rows[0]>=len(self.final_records()):
+            self.current_final=None
+            self.set_text(self.ui.finalText,'')
+            self.ui.finalMapping.setText('Select a segment to review its final transcript.')
+            self.ui.finalPlay.setEnabled(False)
+            return
         r=self.final_records()[rows[0]];self.current_final=r['segment_id']
-        preview = corpus.is_preview(r)
-        for control in (self.ui.finalStart, self.ui.finalEnd, self.ui.finalLabel, self.ui.finalQuality,
-                        self.ui.finalStatus, self.ui.finalText, self.ui.finalReason, self.ui.finalApply, self.ui.finalSplit):
-            control.setEnabled(not preview)
-        fields=[(self.ui.finalStart,r['start']),(self.ui.finalEnd,r['end'])]
-        for field,value in fields:field.blockSignals(True);field.setValue(value);field.blockSignals(False)
-        for field,value in [(self.ui.finalLabel,r['label']),(self.ui.finalQuality,r.get('clean_noisy','unavailable')),(self.ui.finalStatus,r['status'])]:
-            field.blockSignals(True);field.setCurrentText(value);field.blockSignals(False)
-        self.set_text(self.ui.finalText,r.get('final_transcript',''));self.final_draft=False
-        self.ui.finalMapping.setText('Source mapping: '+', '.join(f"{p['start']:.3f}–{p['end']:.3f}s" for p in r['source_spans']))
+        self.set_text(self.ui.finalText,r.get('final_transcript',''))
+        status=r.get('status','needs_review').replace('_',' ').title()
+        boundary=r.get('segmentation_status','unresolved' if corpus.is_preview(r) else 'resolved').replace('_',' ').title()
+        self.ui.finalMapping.setText(f"{r['segment_id']} · {r['start']:.3f}–{r['end']:.3f} s · Transcription: {status} · Segmentation: {boundary}")
+        self.ui.finalPlay.setEnabled(True)
 
     # Flag the review as edited and redraw the tables if requested.
     def changed(self,refresh=True):
@@ -387,21 +418,9 @@ class ASRWorkspace(QObject):
         self.show_comparison(r)
         self.transcript_draft=False;self.record_changed(self.row_by_id[r['segment_id']])
 
-    # Commit final edits and flag measurements affected by new clip boundaries.
-    def commit_final(self,refresh=True):
-        if refresh:self.p.index(self.ui.finalTable)
-        r=self.find(self.current_final)
-        if r is None:raise ValueError('Select one final-review row.')
-        corpus.edit(r,self.p.audio,self.p.duration,self.ui.finalStart.value(),self.ui.finalEnd.value(),
-            self.ui.finalLabel.currentText(),self.ui.finalQuality.currentText(),self.ui.finalText.toPlainText(),
-            self.ui.finalStatus.currentText(),self.p.reviewer(),self.audit_log,self.ui.finalReason.text())
-        self.final_draft=False;self.record_changed(self.row_by_id[r['segment_id']])
-        if refresh:self.p.status('Final edit saved. If audio boundaries changed, recalculate SNR and rerun ASR.')
-
-    # Save text still in either editor before moving on to another clip.
+    # Save the transcript draft before moving on to another clip or export.
     def commit_drafts(self):
         if self.transcript_draft and self.current_asr:self.commit_transcript('accepted' if self.ui.asrFinalText.toPlainText().strip() else 'needs_review',False)
-        if self.final_draft and self.current_final:self.commit_final(False)
 
     # Start recognition for the models and clips requested by the user.
     def transcribe(self,selected):
@@ -543,53 +562,6 @@ class ASRWorkspace(QObject):
         path=Path(self.playback_dir.name)/(uuid.uuid4().hex+'.wav')
         sf.write(path,audio,16000,subtype='PCM_16');self.p.play(path,0,len(audio)/16000)
 
-    # Split the selected clip and record the change in its history.
-    def split(self):
-        self.commit_drafts();r=self.selected(self.ui.finalTable)
-        if len(r)!=1:raise ValueError('Select one clip to split.')
-        if corpus.is_preview(r[0]):raise ValueError('Review unresolved boundaries in Segments first.')
-        who=self.p.reviewer();parts=corpus.split(r[0],self.ui.finalSplitPosition.value())
-        index=self.records.index(r[0]);before=copy.deepcopy(r[0]);self.records[index:index+1]=parts
-        corpus.audit(self.audit_log,'split_final_clip',who,before,parts);self.current_final=None;self.changed()
-
-    # Join the selected clips in the final review and log the change.
-    def merge(self):
-        self.commit_drafts();selected=self.selected(self.ui.finalTable);who=self.p.reviewer()
-        if any(corpus.is_preview(r) for r in selected):raise ValueError('Review unresolved boundaries in Segments first.')
-        merged=corpus.merge(selected)
-        before=copy.deepcopy(selected);ids={r['segment_id'] for r in selected}
-        self.records=[r for r in self.records if r['segment_id'] not in ids]+[merged];self.records.sort(key=lambda r:r['start'])
-        corpus.audit(self.audit_log,'merge_final_clips',who,before,merged);self.current_final=None;self.changed()
-
-    # Add a manual selection from the source to the final review table.
-    def add(self):
-        self.commit_drafts();self.p.require_audio();who=self.p.reviewer()
-        record=corpus.new_clip(self.p.audio,self.ui.finalStart.value(),self.ui.finalEnd.value(),self.ui.finalLabel.currentText(),self.p.duration)
-        self.records.append(record);self.records.sort(key=lambda r:r['start'])
-        corpus.audit(self.audit_log,'add_final_clip',who,None,record);self.changed()
-
-    # Remove the selected records while keeping a history of the deletion.
-    def delete(self):
-        self.commit_drafts();selected=self.selected(self.ui.finalTable);who=self.p.reviewer()
-        if any(corpus.is_preview(r) for r in selected):raise ValueError('Review unresolved boundaries in Segments first.')
-        ids={r['segment_id'] for r in selected}
-        corpus.audit(self.audit_log,'delete_final_clips',who,selected,None)
-        self.records=[r for r in self.records if r['segment_id'] not in ids];self.current_final=None;self.changed()
-
-    # Run the quality measurements again for edited review clips.
-    def recalculate(self):
-        self.commit_drafts();selected=self.selected(self.ui.finalTable);who=self.p.reviewer();threshold=self.ui.finalSNRThreshold.value()
-        policy=self.p.snr_policy;justification=self.p.ui.snrJustification.text().strip()
-        snapshot=copy.deepcopy(selected)
-        # Put the new scores back on the records with matching IDs.
-        def done(result):
-            by_id={r['segment_id']:r for r in result}
-            before=copy.deepcopy(self.records)
-            self.records=[by_id.get(r['segment_id'],r) for r in self.records]
-            corpus.audit(self.audit_log,'recalculate_final_snr',who,before,self.records,f'Threshold {threshold:g} dB; pause energy + WADA; rule {policy}')
-            self.changed()
-        self.p.start('Calculating pause energy + WADA-SNR for final-review clips…',lambda log:corpus.recalculate_quality(snapshot,threshold,policy,justification),done)
-
     # Ask for the video name and append its numbers to the chosen summary workbook.
     def save_process_summary(self):
         self.commit_drafts()
@@ -613,7 +585,7 @@ class ASRWorkspace(QObject):
             path = path.with_suffix('.xlsx')
         if path.suffix.lower() != '.xlsx':
             raise ValueError('Choose an .xlsx workbook.')
-        summary = corpus.process_summary(self.p.duration, self.p.regions, self.records, self.audit_log)
+        summary = corpus.process_summary(self.p.duration, self.p.regions, self.records, self.audit_log, session=self.p.session)
         # Remember the workbook for the next video once the row has been saved.
         def done(_):
             settings.setValue('summary_workbook',str(path))
@@ -644,21 +616,41 @@ class ASRWorkspace(QObject):
     # Start writing the corpus using the decisions currently on the review page.
     def export(self):
         self.commit_drafts()
+        self.check_export_current()
+        directory=QFileDialog.getExistingDirectory(self.w,'Export final corpus',str(self.p.source_folder()))
+        if not directory:return
+        self.start_corpus_export(step_folder(directory, 'Review and export'),
+                                 self.ui.allowPartialExport.isChecked())
+
+    def check_export_current(self):
         if self.records or not (self.p.session or {}).get('unresolved') or any(
                 s['status']=='approved' for s in self.p.session.get('segments',[])):
             self.check_current()
-        directory=QFileDialog.getExistingDirectory(self.w,'Export final corpus',str(self.p.source_folder()))
-        if not directory:return
-        directory = str(step_folder(directory, 'Review and export'))
-        records=copy.deepcopy(self.records);audit=copy.deepcopy(self.audit_log)
+
+    def export_automatic(self):
+        """Save a partial snapshot without opening a dialog or approving any review."""
+        self.check_export_current()
+        directory = self.p.source_folder() / 'Review and export' / 'Automatic partial export'
+        self.start_corpus_export(directory, True, automatic=True)
+
+    def start_corpus_export(self, directory, partial, *, automatic=False):
+        # Export runs with editing controls disabled and treats nested review data as read-only.
+        # Avoid duplicating an entire long recording review before starting the worker.
+        records=list(self.records);audit=list(self.audit_log)
         metadata=dict(source=self.source_metadata,audio=str(self.p.audio),
                       source_review=dict(region_changes=self.p.changes,step4=self.p.session,snr=self.p.snr_results),
                       qwen_model=self.ui.qwenModel.text(),cohere_model=self.ui.cohereModel.text(),second_asr_engine='cohere_arabic',
                       pending_source_candidates=sum(r['status']=='pending' for r in self.p.session['segments']),
                       unresolved_source_spans=sum(r['status']!='reviewed' for _,r,_,_ in corpus.review.visible_unresolved(self.p.session)))
-        partial=self.ui.allowPartialExport.isChecked()
-        # Open the result folder and show how many clips were exported.
         def done(result):
-            self.p.status(f"Exported {result['clips']} clips to {result['output_dir']}. Partial: {result['partial']}.")
-            self.w.open_path(Path(result['output_dir']))
-        self.p.start('Writing corpus WAV, TXT, CSV and audit data…',lambda log:corpus.export_corpus(records,metadata,audit,directory,partial),done)
+            if automatic:
+                report = Path(result['output_dir']) / 'corpus_report.html'
+                message = (f"Automatic processing finished. Partial corpus: {result['clips']} clips. "
+                           f"Playable HTML: {report}. Pending boundaries and transcripts remain unapproved.")
+                self.w.append_log(message)
+                self.p.status(message)
+            else:
+                self.p.status(f"Exported {result['clips']} clips to {result['output_dir']}. Partial: {result['partial']}.")
+                self.w.open_path(Path(result['output_dir']))
+        self.p.start('Writing corpus WAV, TXT, CSV and playable HTML…',
+                     lambda log:corpus.export_corpus(records,metadata,audit,directory,partial,automatic=automatic,log=log),done)
