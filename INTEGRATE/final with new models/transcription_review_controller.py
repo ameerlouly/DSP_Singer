@@ -16,6 +16,7 @@ import uuid
 
 from PyQt6.QtCore import QObject, Qt, QSettings, pyqtSignal
 from PyQt6.QtWidgets import QFileDialog, QInputDialog, QMessageBox
+from PyQt6.QtMultimedia import QMediaPlayer
 import soundfile as sf
 import transcript_agreement_and_io as engines
 import corpus_review_and_export as corpus
@@ -36,6 +37,8 @@ class ASRWorkspace(QObject):
         self.current_asr=None;self.current_final=None
         self.transcript_draft=False
         self.playback_dir=tempfile.TemporaryDirectory(prefix='speech_corpus_play_')
+        self.asr_preview = None
+        self.asr_preview_file = None
         self.p.table(self.ui.asrTable);self.p.table(self.ui.finalTable);self.p.table(self.ui.processSummaryTable)
         for column, key in enumerate(corpus.REVIEW_COLUMNS):
             if 'transcript' in key or key in ('audio_file', 'change_log'):
@@ -48,7 +51,8 @@ class ASRWorkspace(QObject):
         self.ui.asrFinalText.textChanged.connect(self.mark_transcript_draft)
         actions={
             'asrSync':self.sync_current,'asrSelected':lambda:self.transcribe(True),'asrPending':lambda:self.transcribe(False),
-            'asrOpenSession':self.p.open_project,'asrPlay':lambda:self.play_table(self.ui.asrTable),
+            'asrOpenSession':self.p.open_project,'asrPlay':self.play_asr_cursor,
+            'asrPausePreview':self.pause_asr_preview,'asrStopPreview':self.stop_asr_preview,
             'asrUseA':lambda:self.choose('a'),'asrUseB':lambda:self.choose('b'),
             'asrAccept':lambda:self.commit_transcript('accepted'),'asrDifficult':lambda:self.commit_transcript('difficult'),
             'asrGoReview':lambda:self.w.navigationList.setCurrentRow(5),'finalToASR':lambda:self.w.navigationList.setCurrentRow(4),
@@ -57,6 +61,8 @@ class ASRWorkspace(QObject):
             'saveProcessSummary':self.save_process_summary,
         }
         for name,action in actions.items():getattr(self.ui,name).clicked.connect(lambda checked=False,a=action:self.p.guard(a))
+        self.ui.asrSeekSlider.valueChanged.connect(self.asr_slider_changed)
+        self.ui.asrSeekSlider.sliderReleased.connect(lambda: self.p.guard(self.seek_asr_preview))
         self.ui.asrStop.clicked.connect(self.cancel)
         self.piece.connect(self.receive_piece);self.progress.connect(self.receive_progress)
         self.refresh()
@@ -80,6 +86,7 @@ class ASRWorkspace(QObject):
 
     # Empty the text fields so they don't show words from the previous selection.
     def clear_editors(self):
+        self.configure_asr_preview(None)
         for widget in (self.ui.asrTextA,self.ui.asrTextB,self.ui.asrNormalizedA,self.ui.asrNormalizedB,self.ui.asrFinalText,self.ui.finalText):self.set_text(widget,'')
         self.ui.asrSelectedStatus.setText('Segment — · Transcription status: —')
         self.ui.asrNextSegment.setEnabled(False)
@@ -248,6 +255,7 @@ class ASRWorkspace(QObject):
                         for row in corpus.review_rows(self.final_records(), self.audit_log)])
         self.refresh_summary()
         rows=self.p.selected(self.ui.asrTable)
+        self.configure_asr_preview(self.records[rows[0]] if len(rows)==1 and rows[0]<len(self.records) else None)
         self.ui.asrNextSegment.setEnabled(bool(self.records) and (not rows or rows[-1] < len(self.records)-1))
         self.select_final()
 
@@ -331,12 +339,16 @@ class ASRWorkspace(QObject):
         rows=self.p.selected(self.ui.asrTable)
         self.ui.asrNextSegment.setEnabled(bool(self.records) and (not rows or rows[-1] < len(self.records)-1))
         if len(rows)!=1 or rows[0]>=len(self.records):
+            self.configure_asr_preview(None)
             self.ui.asrSelectedStatus.setText('Select one segment to see its transcription status.')
             return
         if self.transcript_draft and self.current_asr:
             try:self.commit_transcript('accepted' if self.ui.asrFinalText.toPlainText().strip() else 'needs_review',refresh=False)
-            except Exception as exc:QMessageBox.warning(self.w,'Save transcript first',str(exc));return
+            except Exception as exc:
+                self.configure_asr_preview(None)
+                QMessageBox.warning(self.w,'Save transcript first',str(exc));return
         r=self.records[rows[0]];self.current_asr=r['segment_id']
+        self.configure_asr_preview(r)
         self.set_text(self.ui.asrTextA,r.get('transcript_a',''));self.set_text(self.ui.asrTextB,r.get('transcript_b',''));self.set_text(self.ui.asrFinalText,r.get('final_transcript',''))
         self.set_text(self.ui.asrNormalizedA,r.get('normalized_transcript_a',''))
         self.set_text(self.ui.asrNormalizedB,r.get('normalized_transcript_b',''))
@@ -548,6 +560,131 @@ class ASRWorkspace(QObject):
             selected=self.transcribe_after_sync
             self.transcribe_after_sync=None
             self.p.guard(lambda:self.transcribe(selected))
+
+    # The ASR listening cursor always uses clip-relative milliseconds, even for
+    # long previews stored as an interval of the original source WAV.
+    @staticmethod
+    def asr_preview_spec(record):
+        if not record:
+            return None
+        pieces = record.get('audio_pieces') or []
+        ranges = tuple((str(p['path']), round(float(p['start'])*corpus.RATE),
+                        round(float(p['end'])*corpus.RATE)) for p in pieces)
+        if not ranges or any(a < 0 or b <= a for _, a, b in ranges):
+            return None
+        token = (record['segment_id'], record.get('audio_signature'), ranges)
+        if len(ranges) == 1:
+            path, first, last = ranges[0]
+            offset = round(first*1000/corpus.RATE)
+            duration = round(last*1000/corpus.RATE)-offset
+        else:
+            # Preserve legacy multi-piece audio mappings exactly as in play_table.
+            path, offset = None, 0
+            duration = round(sum(b-a for _, a, b in ranges)*1000/corpus.RATE)
+        if duration <= 0:
+            return None
+        return dict(token=token, path=path, offset=offset, duration=duration)
+
+    def configure_asr_preview(self, record):
+        spec = self.asr_preview_spec(record)
+        changed = spec != self.asr_preview
+        if changed:
+            if self.p.play_owner == 'asr':
+                self.p.stop_playback()
+            self.asr_preview_file = None
+        self.asr_preview = spec
+        slider = self.ui.asrSeekSlider
+        for widget in (slider, self.ui.asrPlay, self.ui.asrPausePreview, self.ui.asrStopPreview):
+            widget.setEnabled(spec is not None)
+        slider.blockSignals(True)
+        slider.setRange(0, spec['duration'] if spec else 0)
+        if changed:
+            slider.setValue(0)
+        slider.blockSignals(False)
+        self.ui.asrSeekEnd.setText(self.p.clock(slider.maximum()))
+        self.update_asr_cursor_label()
+
+    def update_asr_cursor_label(self):
+        self.ui.asrCursorLabel.setText('Clip time ' + self.p.clock(self.ui.asrSeekSlider.value()))
+
+    def asr_slider_changed(self, value):
+        self.update_asr_cursor_label()
+        if not self.ui.asrSeekSlider.isSliderDown():
+            self.p.guard(self.seek_asr_preview)
+
+    def play_asr_cursor(self):
+        records = self.selected(self.ui.asrTable)
+        if len(records) != 1:
+            raise ValueError('Select one clip to play.')
+        record = records[0]
+        self.configure_asr_preview(record)
+        spec = self.asr_preview
+        if not spec:
+            raise ValueError('No playable audio in this clip.')
+        if spec['path'] is not None:
+            path = Path(spec['path'])
+        else:
+            if self.asr_preview_file is None:
+                audio = corpus.read_audio(record)
+                path = Path(self.playback_dir.name)/(uuid.uuid4().hex+'.wav')
+                sf.write(path, audio, corpus.RATE, subtype='PCM_16')
+                self.asr_preview_file = path
+            path = self.asr_preview_file
+        slider = self.ui.asrSeekSlider
+        if slider.value() >= spec['duration']:
+            slider.setValue(0)
+        self.p.play(path, (spec['offset']+slider.value())/1000,
+                    (spec['offset']+spec['duration'])/1000, owner='asr')
+        if self.p.play_owner == 'asr':
+            self.ui.asrPausePreview.setText('Pause')
+
+    def seek_asr_preview(self):
+        p, spec = self.p, self.asr_preview
+        if p.play_owner != 'asr' or not p.play_range or p.player is None or not spec:
+            return
+        position = self.ui.asrSeekSlider.value()
+        if position >= spec['duration']:
+            p.stop_playback()
+            return
+        p.pending_seek = spec['offset']+position
+        p.play_range = (p.pending_seek, spec['offset']+spec['duration'])
+        # While loading, media_ready will use the latest requested seek instead.
+        if p.player.mediaStatus() in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
+            p.player.setPosition(p.pending_seek)
+
+    def pause_asr_preview(self):
+        p = self.p
+        if p.play_owner != 'asr' or p.player is None or not p.play_range:
+            self.play_asr_cursor()
+            return
+        p.play_paused = not p.play_paused
+        if p.play_paused:
+            p.player.pause()
+            p.play_timer.stop()
+        else:
+            if p.player.mediaStatus() in (QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia):
+                p.player.play()
+            p.play_timer.start(40)
+        self.ui.asrPausePreview.setText('Resume' if p.play_paused else 'Pause')
+
+    def update_asr_playback_position(self, position):
+        if self.p.play_owner != 'asr' or not self.asr_preview:
+            return
+        slider = self.ui.asrSeekSlider
+        if slider.isSliderDown():
+            return
+        slider.blockSignals(True)
+        slider.setValue(min(slider.maximum(), max(0, position-self.asr_preview['offset'])))
+        slider.blockSignals(False)
+        self.update_asr_cursor_label()
+
+    def asr_playback_stopped(self):
+        self.ui.asrPausePreview.setText('Pause / resume')
+
+    def stop_asr_preview(self):
+        if self.p.play_owner == 'asr':
+            self.p.stop_playback()
+        self.ui.asrSeekSlider.setValue(0)
 
     # Play the selected review record using the samples described by its mapping.
     def play_table(self,table):

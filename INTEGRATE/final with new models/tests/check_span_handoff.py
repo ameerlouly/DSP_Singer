@@ -147,13 +147,12 @@ def check():
         result = corpus.export_corpus(workspace.records, {}, [], root, True)
         assert result['partial'] and result['clips']==3
         out = Path(result['output_dir'])
-        with (out/'review.csv').open(encoding='utf-8-sig') as handle:
+        assert not (out/'review.csv').exists()
+        with (out/'corpus.csv').open(encoding='utf-8-sig') as handle:
             exported_review = list(csv.DictReader(handle))
         assert [r['segmentation_status'] for r in exported_review] == ['unresolved','unresolved','resolved']
         assert [r['audio_file'] for r in exported_review] == [
             'segment_00001_unresolved.wav','segment_00002_unresolved.wav','segment_00003.wav']
-        with (out/'corpus.csv').open(encoding='utf-8-sig') as handle:
-            assert list(csv.DictReader(handle))==exported_review
         for row in exported_review:
             assert (out/row['audio_file']).with_suffix('.txt').is_file()
         full_report = corpus.report_rows(workspace.records, [], processing.session, source)

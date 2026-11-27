@@ -43,7 +43,8 @@ class TranscriptionExportSelectionTests(unittest.TestCase):
         out = Path(result['output_dir'])
         self.assertEqual(result['clips'], 3)
         expected = [r['segment_id'] for r in self.expected]
-        for name in ('review.csv','review_compatible.csv','corpus.csv'):
+        self.assertFalse((out/'review.csv').exists())
+        for name in ('review_compatible.csv','corpus.csv'):
             with (out/name).open(encoding='utf-8-sig') as stream:
                 rows = list(csv.DictReader(stream))
             self.assertEqual([r['segment_id'] for r in rows], expected)

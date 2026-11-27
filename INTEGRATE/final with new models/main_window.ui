@@ -3750,7 +3750,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                 <item>
                  <widget class="QLabel" name="asrInfo">
                   <property name="text">
-                   <string>Load the Part 4 results to include approved clips and unresolved spans. First use downloads model weights. System B is Cohere Arabic. The default uses NVIDIA INT8 when available and CPU otherwise.</string>
+                   <string>Load the Part 4 results to include approved clips and unresolved spans. First use downloads model weights. System B is Cohere Arabic. Cohere INT8 runs on NVIDIA CUDA or Intel Arc XPU. Use run_intel_arc.bat for Intel graphics.</string>
                   </property>
                   <property name="wordWrap">
                    <bool>true</bool>
@@ -3871,6 +3871,116 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                       <bool>true</bool>
                      </property>
                     </widget>
+                   </item>
+                   <item>
+                    <layout class="QHBoxLayout" name="asrSeekRow">
+                     <item>
+                      <widget class="QLabel" name="asrCursorLabel">
+                       <property name="minimumSize">
+                        <size>
+                         <width>155</width>
+                         <height>0</height>
+                        </size>
+                       </property>
+                       <property name="styleSheet">
+                        <string>border:none;</string>
+                       </property>
+                       <property name="text">
+                        <string>Clip time 00:00.000</string>
+                       </property>
+                      </widget>
+                     </item>
+                     <item>
+                      <widget class="QSlider" name="asrSeekSlider">
+                       <property name="enabled">
+                        <bool>false</bool>
+                       </property>
+                       <property name="toolTip">
+                        <string>Seek within the selected transcription clip. Time is relative to the clip start.</string>
+                       </property>
+                       <property name="accessibleName">
+                        <string>Transcription clip playback position</string>
+                       </property>
+                       <property name="styleSheet">
+                        <string>QSlider::groove:horizontal {height:8px;background:#D5E4E5;border-radius:4px;} QSlider::sub-page:horizontal {background:#157A6E;border-radius:4px;} QSlider::handle:horizontal {background:#1E607A;border:2px solid #FFFFFF;width:16px;margin:-6px 0;border-radius:9px;} QSlider::handle:horizontal:hover {background:#1B566E;} QSlider::handle:horizontal:focus {border:2px solid #173B40;} QSlider::handle:horizontal:disabled {background:#A5B8BD;}</string>
+                       </property>
+                       <property name="minimum">
+                        <number>0</number>
+                       </property>
+                       <property name="maximum">
+                        <number>0</number>
+                       </property>
+                       <property name="singleStep">
+                        <number>100</number>
+                       </property>
+                       <property name="pageStep">
+                        <number>1000</number>
+                       </property>
+                       <property name="orientation">
+                        <enum>Qt::Orientation::Horizontal</enum>
+                       </property>
+                      </widget>
+                     </item>
+                     <item>
+                      <widget class="QLabel" name="asrSeekEnd">
+                       <property name="styleSheet">
+                        <string>border:none;</string>
+                       </property>
+                       <property name="text">
+                        <string>00:00.000</string>
+                       </property>
+                      </widget>
+                     </item>
+                    </layout>
+                   </item>
+                   <item>
+                    <layout class="QHBoxLayout" name="asrPreviewActions">
+                     <item>
+                      <widget class="QPushButton" name="asrPlay">
+                       <property name="enabled">
+                        <bool>false</bool>
+                       </property>
+                       <property name="styleSheet">
+                        <string>QPushButton#asrPlay {background:#157A6E;color:white;border:1px solid #157A6E;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#asrPlay:hover {background:#136E63;} QPushButton#asrPlay:pressed {background:#116258;} QPushButton#asrPlay:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#asrPlay:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
+                       </property>
+                       <property name="text">
+                        <string>Play from cursor</string>
+                       </property>
+                      </widget>
+                     </item>
+                     <item>
+                      <widget class="QPushButton" name="asrPausePreview">
+                       <property name="enabled">
+                        <bool>false</bool>
+                       </property>
+                       <property name="toolTip">
+                        <string>Pause or resume the selected clip without restarting it.</string>
+                       </property>
+                       <property name="styleSheet">
+                        <string>QPushButton#asrPausePreview {background:#2563EB;color:#FFFFFF;border:1px solid #2563EB;border-radius:6px;padding:8px 14px;font-weight:600;} QPushButton#asrPausePreview:hover {background:#2159D4;border-color:#2159D4;} QPushButton#asrPausePreview:focus {border:2px solid #173B40;padding:7px 13px;} QPushButton#asrPausePreview:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
+                       </property>
+                       <property name="text">
+                        <string>Pause / resume</string>
+                       </property>
+                      </widget>
+                     </item>
+                     <item>
+                      <widget class="QPushButton" name="asrStopPreview">
+                       <property name="enabled">
+                        <bool>false</bool>
+                       </property>
+                       <property name="toolTip">
+                        <string>Stop playback and return to the start of this clip.</string>
+                       </property>
+                       <property name="styleSheet">
+                        <string>QPushButton#asrStopPreview {background:#C83E3B;color:#FFFFFF;border:1px solid #C83E3B;border-radius:6px;padding:8px 14px;font-weight:600;} QPushButton#asrStopPreview:hover {background:#B43835;border-color:#B43835;} QPushButton#asrStopPreview:focus {border:2px solid #173B40;padding:7px 13px;} QPushButton#asrStopPreview:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
+                       </property>
+                       <property name="text">
+                        <string>Stop playback</string>
+                       </property>
+                      </widget>
+                     </item>
+                    </layout>
                    </item>
                    <item>
                     <widget class="QLabel" name="asrALabel">
@@ -4075,16 +4185,6 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                      </property>
                      <layout class="QGridLayout" name="asrChoiceRowLayout">
                       <item row="0" column="0">
-                       <widget class="QPushButton" name="asrPlay">
-                        <property name="styleSheet">
-                         <string>QPushButton#asrPlay {background:#157A6E;color:white;border:1px solid #157A6E;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#asrPlay:hover {background:#136E63;} QPushButton#asrPlay:pressed {background:#116258;} QPushButton#asrPlay:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#asrPlay:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
-                        </property>
-                        <property name="text">
-                         <string>Play clip</string>
-                        </property>
-                       </widget>
-                      </item>
-                      <item row="0" column="1">
                        <widget class="QPushButton" name="asrUseA">
                         <property name="styleSheet">
                          <string>QPushButton#asrUseA {background:#2563EB;color:white;border:1px solid #2563EB;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#asrUseA:hover {background:#2159D4;} QPushButton#asrUseA:pressed {background:#1E4FBC;} QPushButton#asrUseA:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#asrUseA:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
@@ -4094,7 +4194,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                         </property>
                        </widget>
                       </item>
-                      <item row="0" column="2">
+                      <item row="0" column="1">
                        <widget class="QPushButton" name="asrUseB">
                         <property name="styleSheet">
                          <string>QPushButton#asrUseB {background:#4F46E5;color:white;border:1px solid #4F46E5;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#asrUseB:hover {background:#473FCE;} QPushButton#asrUseB:pressed {background:#3F38B7;} QPushButton#asrUseB:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#asrUseB:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>
@@ -4104,7 +4204,7 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                         </property>
                        </widget>
                       </item>
-                      <item row="0" column="3">
+                      <item row="0" column="2">
                        <widget class="QPushButton" name="asrGoReview">
                         <property name="styleSheet">
                          <string>QPushButton#asrGoReview {background:#475569;color:white;border:1px solid #475569;border-radius:6px;padding:8px 12px;font-weight:600;} QPushButton#asrGoReview:hover {background:#404C5E;} QPushButton#asrGoReview:pressed {background:#394454;} QPushButton#asrGoReview:focus {border:2px solid #173B40;padding:7px 11px;} QPushButton#asrGoReview:disabled {background:#E3E9EB;color:#61777C;border-color:#CDD9DC;}</string>

@@ -249,6 +249,8 @@ class ProcessingWorkspace(QObject):
 
     # Switch pages and bring the newly visible review controls up to date.
     def navigate(self, index):
+        if index != 4 and self.play_owner == 'asr':
+            self.stop_playback()
         self.window.pages.setCurrentIndex(index)
         if hasattr(self,'asr'):
             if index == 5:
@@ -730,7 +732,7 @@ class ProcessingWorkspace(QObject):
                        self.ui.markRegionStart, self.ui.markRegionEnd):
             widget.setEnabled(enabled)
         changed = bounds != self.preview_bounds
-        if changed and self.play_path is not None and self.play_path == self.audio:
+        if changed and self.play_owner != 'asr' and self.play_path is not None and self.play_path == self.audio:
             self.stop_playback()
         self.preview_bounds = bounds
         slider.blockSignals(True)
@@ -786,7 +788,7 @@ class ProcessingWorkspace(QObject):
         if self.preview_bounds is None:
             return
         cursor, end = self.region_cursor_interval()
-        if self.play_owner not in self.part4_previews and self.player is not None and self.play_path == self.audio and self.play_range:
+        if self.play_owner != 'asr' and self.play_owner not in self.part4_previews and self.player is not None and self.play_path == self.audio and self.play_range:
             if cursor >= end:
                 self.stop_playback()
                 return
@@ -812,7 +814,7 @@ class ProcessingWorkspace(QObject):
 
     # Pause the active region preview or continue from the same place.
     def pause_region_preview(self):
-        if self.play_owner in self.part4_previews or self.player is None or self.play_path != self.audio or not self.play_range:
+        if self.play_owner == 'asr' or self.play_owner in self.part4_previews or self.player is None or self.play_path != self.audio or not self.play_range:
             self.play_region_cursor()
             return
         self.play_paused = not self.play_paused
@@ -1809,7 +1811,7 @@ class ProcessingWorkspace(QObject):
         self.update_part4_playback_position(self.pending_seek)
         if owner in self.part4_previews:
             getattr(self.ui, 'pause' + owner.title() + 'Preview').setText('Pause')
-        if path == self.audio:
+        if owner != 'asr' and path == self.audio:
             self.update_region_playback_position(self.pending_seek)
             self.ui.pauseRegionPreview.setText('Pause')
         url=QUrl.fromLocalFile(str(Path(path).resolve()))
@@ -1827,12 +1829,14 @@ class ProcessingWorkspace(QObject):
         elif status==QMediaPlayer.MediaStatus.EndOfMedia and self.play_range:
             self.update_region_playback_position(self.play_range[1])
             self.update_part4_playback_position(self.play_range[1])
+            if self.play_owner == 'asr':
+                self.asr.update_asr_playback_position(self.play_range[1])
             self.stop_playback()
 
     # Keep the region's listening cursor aligned with playback.
     def update_region_playback_position(self, position):
         slider = self.ui.regionSeekSlider
-        if self.play_owner in self.part4_previews or self.play_path != self.audio or self.preview_bounds is None or slider.isSliderDown():
+        if self.play_owner == 'asr' or self.play_owner in self.part4_previews or self.play_path != self.audio or self.preview_bounds is None or slider.isSliderDown():
             return
         slider.blockSignals(True)
         slider.setValue(position)
@@ -1841,8 +1845,16 @@ class ProcessingWorkspace(QObject):
 
     # Send each position update to the preview controls that need it.
     def playback_position(self,position):
-        self.update_region_playback_position(position)
-        self.update_part4_playback_position(position)
+        if self.play_owner == 'asr':
+            # Ignore the previous media clock while a new file is loading.
+            if self.player is None or self.player.mediaStatus() not in (
+                    QMediaPlayer.MediaStatus.LoadedMedia, QMediaPlayer.MediaStatus.BufferedMedia,
+                    QMediaPlayer.MediaStatus.EndOfMedia):
+                return
+            self.asr.update_asr_playback_position(position)
+        else:
+            self.update_region_playback_position(position)
+            self.update_part4_playback_position(position)
         if self.play_range and position>=self.play_range[1]:self.stop_playback()
 
     # Stop at the marked endpoint so playback doesn't spill into the next clip.
@@ -1851,6 +1863,7 @@ class ProcessingWorkspace(QObject):
 
     # Release the current listening range and stop the player.
     def stop_playback(self):
+        owner = self.play_owner
         self.play_range=None
         self.play_path=None
         self.play_owner=None
@@ -1861,6 +1874,8 @@ class ProcessingWorkspace(QObject):
         self.ui.pauseRegionPreview.setText('Pause / resume')
         for kind in self.part4_previews:
             getattr(self.ui, 'pause' + kind.title() + 'Preview').setText('Pause / resume')
+        if owner == 'asr':
+            self.asr.asr_playback_stopped()
 
     # Play the highlighted region from start to finish.
     def play_region(self):

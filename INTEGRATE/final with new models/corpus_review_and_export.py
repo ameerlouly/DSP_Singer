@@ -1030,9 +1030,8 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
             metadata['source_review_file']='source_review.json'
         progress('Building review rows')
         rows = list(review_rows(exported, audit_log))
-        progress('Writing corpus and review CSV files')
+        progress('Writing detailed corpus CSV')
         write_review_table(out / 'corpus.csv', rows)
-        write_review_table(out / 'review.csv', rows)
         progress('Writing compatible 16-column review CSV')
         write_review_table(out / COMPATIBLE_REVIEW_FILENAME,
                            compatible_review_rows(exported, rows),
