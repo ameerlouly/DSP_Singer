@@ -162,10 +162,11 @@ with tempfile.TemporaryDirectory() as d,patch.object(QMessageBox,'warning',side_
  assert all(r['asr_b_done'] and r['asr_b_engine']==engine.COHERE_CPU_ENGINE for r in a.records[:2])
  # Full output includes exact approved continuous source audio plus UTF-8 text/CSV.
  with patch.object(QFileDialog,'getExistingDirectory',return_value=str(root)):a.export();wait()
- out=opened[-1];rows=list(csv.DictReader((out/'corpus.csv').open(encoding='utf-8-sig')))
+ out=opened[-1];rows=list(csv.DictReader((out/'review_compatible.csv').open(encoding='utf-8-sig')))
+ assert {p.name for p in out.glob('*.csv')}=={'review_compatible.csv'}
  assert len(rows)==3 and rows[1]['final_transcript']=='السلام عليك'
  assert not (out/'approved_transcripts.csv').exists()
- assert tuple(rows[0])==corpus.REVIEW_COLUMNS
+ assert tuple(rows[0])==corpus.COMPATIBLE_REVIEW_COLUMNS
  assert rows[0]['model_A_transcript'] and rows[0]['model_B_transcript']
  assert list(json.loads((out/'corpus.json').read_text())['segments'][0])==list(corpus.REVIEW_COLUMNS)
  audit=json.loads((out/'corpus_audit.json').read_text())['segments'][0]

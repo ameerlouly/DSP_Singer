@@ -41,7 +41,7 @@ class FullAutoTests(unittest.TestCase):
         self.assertEqual([data['segments'][i] for i in (3,4,5,6,7)],[before['segments'][i] for i in (3,4,5,6,7)])
         self.assertEqual(data['unresolved'],before['unresolved'])
         self.assertFalse(data['analyze_pending_candidates'])
-        self.assertEqual([e['action'] for e in data['changes']], ['auto_approve_segment']*4)
+        self.assertEqual(data['changes'], [])
         review.approve_segments(data,[0],'Human')
         self.assertTrue(data['segments'][0]['pdf_boundary_review']['human_listening_confirmed'])
 
@@ -125,8 +125,8 @@ class FullAutoTests(unittest.TestCase):
             self.assertTrue(out.is_relative_to(root/'external'))
             self.assertTrue((out/'review_compatible.csv').is_file())
             self.assertEqual(json.loads((out/'corpus.json').read_text())['metadata']['export_mode'],'automatic_partial')
-            with (out/'corpus.csv').open(encoding='utf-8-sig') as f:
-                self.assertEqual([r['segmentation_status'] for r in csv.DictReader(f)],['resolved','unresolved'])
+            self.assertEqual({p.name for p in out.glob('*.csv')},{'review_compatible.csv'})
+            self.assertEqual([r['segmentation_status'] for r in json.loads((out/'corpus.json').read_text(encoding='utf-8'))['segments']],['resolved','unresolved'])
             urls=AudioURLs(out/'corpus_report.html').urls
             self.assertEqual(len(urls),2)
             source.unlink()

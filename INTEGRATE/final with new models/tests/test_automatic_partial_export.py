@@ -26,7 +26,8 @@ class AutoExportTests(unittest.TestCase):
             for r,url in zip(records,urls):
                 data,rate=sf.read(out/url,dtype='int16'); self.assertEqual(rate,16000)
                 np.testing.assert_array_equal(data,samples[r['start']*16000:r['end']*16000]);self.assertEqual((out/url).with_suffix('.txt').read_text(),'')
-            with (out/'corpus.csv').open(encoding='utf-8-sig') as f: rows=list(csv.DictReader(f))
+            self.assertEqual({p.name for p in out.glob('*.csv')},{'review_compatible.csv'})
+            rows=json.loads((out/'corpus.json').read_text(encoding='utf-8'))['segments']
             self.assertEqual([r['segmentation_status'] for r in rows],['pending','unresolved'])
     def test_complete_mode_allows_unresolved_without_approval_or_asr(self):
         with tempfile.TemporaryDirectory() as tmp:

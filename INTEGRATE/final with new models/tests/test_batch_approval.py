@@ -45,7 +45,7 @@ class BatchApprovalTests(unittest.TestCase):
             review.require_pdf_review(data,item)
         for i in [3,4,5,6,7]:self.assertEqual(data['segments'][i],before['segments'][i])
         self.assertEqual(data['unresolved'],before['unresolved'])
-        self.assertEqual(len(data['changes']),4)
+        self.assertEqual(data['changes'], [])
         self.assertEqual(review.batch_approval_plan(data)[0],[])
 
     def test_button_calls_batch_once_and_respects_cancel(self):

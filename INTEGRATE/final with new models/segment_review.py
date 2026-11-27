@@ -7,6 +7,7 @@ quality analysis.
 """
 
 from output_folders import new_run_folder
+from activity_history import keep_event, events_only
 from bisect import bisect_right
 from pathlib import Path
 from datetime import datetime, timezone
@@ -87,8 +88,10 @@ def audit(data, action, person, item_id, before, after):
     person=person.strip()
     if not person:
         raise ValueError('Enter the reviewer name first.')
-    data['changes'].append({'time_utc':utc_now(), 'reviewer':person, 'action':action,
-                            'item_id':item_id, 'before':copy.deepcopy(before), 'after':copy.deepcopy(after)})
+    event = {'time_utc':utc_now(), 'reviewer':person, 'action':action,
+             'item_id':item_id, 'before':before, 'after':after}
+    if keep_event(event):
+        data.setdefault('changes', []).append(copy.deepcopy(event))
 
 
 # Check the marked start, end and length before using them as clip boundaries.
@@ -232,7 +235,6 @@ def approve_segment(data, index, reviewer, *, approval_method="individual"):
     if not reviewer:
         raise ValueError('Enter the reviewer name first.')
     item=data['segments'][index]
-    before=copy.deepcopy(item)
     # Check actual sample count and continuous source mapping, including exact 5/15 s boundaries.
     signature=pdf_review_signature(data,item)
     automatic = approval_method == 'auto_process'
@@ -241,7 +243,6 @@ def approve_segment(data, index, reviewer, *, approval_method="individual"):
                      if automatic else 'Annotator confirms complete words, real pauses and about 0.1–0.2 s natural pause at both edges; no synthetic padding or joins.'),
         human_listening_confirmed=not automatic)
     item.update(status='approved', reviewed_by=reviewer)
-    audit(data,'auto_approve_segment' if automatic else 'approve_segment',reviewer,item['id'],before,item)
 
 
 def approve_segments(data, indices, reviewer, *, approval_method="individual"):
@@ -490,9 +491,7 @@ def mark_unresolved_reviewed(data,index,reviewer):
     item=data['unresolved'][index]
     if item['label'] not in LABELS:
         raise ValueError('Set the label before marking the span reviewed.')
-    before=copy.deepcopy(item)
     item.update(status='reviewed',reviewed_by=reviewer)
-    audit(data,'mark_unresolved_reviewed',reviewer,item['id'],before,item)
 
 
 # Check the user's selection falls inside the span before making a candidate from it.
@@ -751,7 +750,7 @@ def report_html(data, exports):
         o=item['original']
         unresolved.append(f"<tr><td>{e(item['id'])}</td><td>{current_start:.3f}</td><td>{current_end:.3f}</td>"
                           f"<td>{e(item['label'])}</td><td>{e(item['status'])}</td><td>{e(o.get('reason',''))}</td><td>{len(item.get('generated_candidate_ids',[]))}</td></tr>")
-    changes=''.join(f"<li>{e(c['time_utc'])} — {e(c['reviewer'])}: {e(c['action'])} ({e(c['item_id'])})</li>" for c in data['changes'])
+    changes=''.join(f"<li>{e(c['time_utc'])} — {e(c['reviewer'])}: {e(c['action'])} ({e(c['item_id'])})</li>" for c in events_only(data['changes']))
     overlaps=overlapping_approved(data)
     overlap_rows=''.join(f"<li>{e(x['left'])} and {e(x['right'])}: {x['seconds']:.3f} s source overlap</li>" for x in overlaps)
     approved=sum(s['status']=='approved' for s in data['segments'])
@@ -887,7 +886,7 @@ def save_and_export(data, source_wav, destination):
         source_start,source_end=require_pdf_review(data,item)
         extract_wav(source,target,source_start,source_end)
         exports[item['id']]=name
-    saved=copy.deepcopy(data)
+    saved=copy.deepcopy(dict(data, changes=events_only(data.get('changes'))))
     saved['last_saved_utc']=utc_now()
     saved['last_exported_files']=exports
     (out/'review_session.json').write_text(json.dumps(saved,ensure_ascii=False,indent=2),encoding='utf-8')

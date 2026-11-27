@@ -44,10 +44,12 @@ class TranscriptionExportSelectionTests(unittest.TestCase):
         self.assertEqual(result['clips'], 3)
         expected = [r['segment_id'] for r in self.expected]
         self.assertFalse((out/'review.csv').exists())
-        for name in ('review_compatible.csv','corpus.csv'):
-            with (out/name).open(encoding='utf-8-sig') as stream:
-                rows = list(csv.DictReader(stream))
-            self.assertEqual([r['segment_id'] for r in rows], expected)
+        self.assertEqual({p.name for p in out.glob('*.csv')},{'review_compatible.csv'})
+        with (out/'review_compatible.csv').open(encoding='utf-8-sig') as stream:
+            rows = list(csv.DictReader(stream))
+        self.assertEqual([r['segment_id'] for r in rows], expected)
+        detailed=json.loads((out/'corpus.json').read_text(encoding='utf-8'))['segments']
+        self.assertEqual([r['segment_id'] for r in detailed],expected)
         urls = AudioURLs(out/'corpus_report.html').urls
         self.assertEqual(len(urls), 3)
         self.assertEqual(len(list(out.glob('*.wav'))), 3)

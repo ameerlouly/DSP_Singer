@@ -86,7 +86,7 @@ class OptionalQualityTests(unittest.TestCase):
         state=dict(signature=corpus.source_signature(processing,saved),audit_log=[])
         tree=ast.parse((ROOT/'transcription_review_controller.py').read_text())
         method=next(n for n in ast.walk(tree) if isinstance(n,ast.FunctionDef) and n.name=='restore')
-        env=dict(snr=snr,corpus=corpus,engines=SimpleNamespace(DEFAULT_QWEN_MODEL='qwen',DEFAULT_COHERE_MODEL='cohere'))
+        env=dict(snr=snr,corpus=corpus,record_view=corpus.record_view,events_only=corpus.events_only,engines=SimpleNamespace(DEFAULT_QWEN_MODEL='qwen',DEFAULT_COHERE_MODEL='cohere'))
         exec(compile(ast.Module(body=[method],type_ignores=[]),'<restore>','exec'),env)
         env['restore'](workspace,state,saved_snr=saved,prepared=([record],0,0))
         self.assertEqual(workspace.signature,corpus.source_signature(processing))

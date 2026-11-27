@@ -148,8 +148,8 @@ def check():
         assert result['partial'] and result['clips']==3
         out = Path(result['output_dir'])
         assert not (out/'review.csv').exists()
-        with (out/'corpus.csv').open(encoding='utf-8-sig') as handle:
-            exported_review = list(csv.DictReader(handle))
+        assert {p.name for p in out.glob('*.csv')}=={'review_compatible.csv'}
+        exported_review = json.loads((out/'corpus.json').read_text(encoding='utf-8'))['segments']
         assert [r['segmentation_status'] for r in exported_review] == ['unresolved','unresolved','resolved']
         assert [r['audio_file'] for r in exported_review] == [
             'segment_00001_unresolved.wav','segment_00002_unresolved.wav','segment_00003.wav']

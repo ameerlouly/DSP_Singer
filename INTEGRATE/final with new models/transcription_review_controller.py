@@ -21,6 +21,7 @@ import soundfile as sf
 import transcript_agreement_and_io as engines
 import corpus_review_and_export as corpus
 import clip_quality_assessment as snr
+from activity_history import events_only, record_view
 
 
 class ASRWorkspace(QObject):
@@ -162,6 +163,7 @@ class ASRWorkspace(QObject):
                 kept+=1
         engines.migrate_second_engine(fresh,model_b)
         engines.migrate_first_engine(fresh,engines.DEFAULT_QWEN_MODEL)
+        fresh=[record_view(record) for record in fresh]
         for record in fresh:corpus.compare(record)
         source=metadata_folder(self.p.source_folder())/'metadata.json'
         metadata=json.loads(source.read_text(encoding='utf-8')) if source.is_file() else {}
@@ -192,7 +194,7 @@ class ASRWorkspace(QObject):
     # Collect transcripts, audit history and source identity for a project save.
     def payload(self, *, snapshot=True):
         capture=copy.deepcopy if snapshot else lambda value:value
-        return dict(records=capture(self.records),audit_log=capture(self.audit_log),signature=self.signature,
+        return dict(records=capture([record_view(r) for r in self.records]),audit_log=capture(events_only(self.audit_log)),signature=self.signature,
                     source_metadata=self.source_metadata,qwen_model=self.ui.qwenModel.text().strip(),cohere_model=self.ui.cohereModel.text().strip(),
                     second_asr_engine='cohere_arabic',
                     asr_comparison_policy=engines.comparison_policy())
@@ -227,8 +229,8 @@ class ASRWorkspace(QObject):
         records,migrated,migrated_a=prepared if prepared is not None else self.prepare_records(data)
         self.ui.qwenModel.setText(engines.DEFAULT_QWEN_MODEL)
         self.ui.cohereModel.setText(data.get('cohere_model') or engines.DEFAULT_COHERE_MODEL)
-        self.records=sorted((snr.optional_quality_record(r) for r in records),key=lambda r:(float(r['start']),float(r['end']),r['segment_id']))
-        self.audit_log=data.get('audit_log',[])
+        self.records=sorted((snr.optional_quality_record(record_view(r)) for r in records),key=lambda r:(float(r['start']),float(r['end']),r['segment_id']))
+        self.audit_log=events_only(data.get('audit_log'))
         self.signature=data.get('signature')
         # Accept the deterministic SNR status migration only when the original
         # signature matches and current results are exactly the reclassified rows.
@@ -414,18 +416,18 @@ class ASRWorkspace(QObject):
         if r is None:raise ValueError('Select one ASR row.')
         text=r.get('transcript_'+key,'')
         if not r.get('asr_'+key+'_done') or not text:raise ValueError('That model has no completed transcript for this clip.')
-        self.set_text(self.ui.asrFinalText,text);self.commit_transcript('accepted')
+        self.set_text(self.ui.asrFinalText,text);self.commit_transcript('accepted',model=key)
 
     # Store the edited transcript and decision under the reviewer's name.
-    def commit_transcript(self,status,refresh=True):
+    def commit_transcript(self,status,refresh=True,*,model=None):
         if refresh:self.p.index(self.ui.asrTable)
         r=self.find(self.current_asr)
         if r is None:raise ValueError('Select one ASR row.')
         who=self.p.reviewer();text=self.ui.asrFinalText.toPlainText().strip()
         if status=='accepted' and not engines.normalize_arabic(text):raise ValueError('Accepted speech needs final text, not only punctuation or diacritics.')
-        before=copy.deepcopy(r)
+        before={k:r[k] for k in ('segment_id','status','final_transcript','human_override') if k in r}
         r.update(final_transcript=text,selected_transcript=text,status=status,transcript_status=status,human_override=True)
-        corpus.audit(self.audit_log,'transcript_review',who,before,r)
+        corpus.audit(self.audit_log,'choose_asr_model' if model else 'transcript_review',who,before,r,model=model)
         self.show_comparison(r)
         self.transcript_draft=False;self.record_changed(self.row_by_id[r['segment_id']])
 

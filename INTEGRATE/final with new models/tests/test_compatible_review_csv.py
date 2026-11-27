@@ -41,9 +41,15 @@ class CompatibleReviewCSVTests(unittest.TestCase):
         with path.open(encoding='utf-8-sig',newline='') as f:
             reader=csv.DictReader(f); self.assertEqual(reader.fieldnames,EXPECTED); rows=list(reader)
         self.assertFalse((out/'review.csv').exists())
-        self.assertEqual({p.name for p in out.glob('*.csv')}, {'corpus.csv', corpus.COMPATIBLE_REVIEW_FILENAME})
-        with (out/'corpus.csv').open(encoding='utf-8-sig',newline='') as f:
-            reader=csv.DictReader(f); self.assertEqual(reader.fieldnames,EXPECTED+['segmentation_status']); detailed=list(reader)
+        self.assertEqual({p.name for p in out.glob('*.csv')}, {corpus.COMPATIBLE_REVIEW_FILENAME})
+        data=json.loads((out/'corpus.json').read_text(encoding='utf-8'))
+        detailed=data['segments']
+        self.assertEqual(list(detailed[0]),EXPECTED+['segmentation_status'])
+        self.assertTrue((out/'corpus_audit.json').is_file())
+        expected_files={'review_compatible.csv','corpus.json','corpus_audit.json','corpus_report.html'}
+        expected_files.update(r['audio_file'] for r in rows)
+        expected_files.update(str(Path(r['audio_file']).with_suffix('.txt')) for r in rows)
+        self.assertEqual({p.name for p in out.iterdir()},expected_files)
         self.assertEqual(len(rows),len(records))
         self.assertEqual([r['audio_file'] for r in rows],AudioURLs(out/'corpus_report.html').urls)
         self.assertEqual([r['audio_file'] for r in rows],[r['audio_file'] for r in detailed])

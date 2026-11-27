@@ -586,15 +586,11 @@ class ProcessingWorkspace(QObject):
     # Record who bulk-approved the flagged regions and when.
     @staticmethod
     def approve_flagged_regions(regions, changes, editor):
-        stamp = review.utc_now()
         approved = 0
         for index, region in enumerate(regions):
             if not region.get('needs_review'):
                 continue
             region.update(needs_review=False, auto_approved_by=editor)
-            changes.append(dict(time_utc=stamp, annotator=editor, region_index=index,
-                                     action='auto_approve_region', start=region['start'],
-                                     end=region['end'], label=region['label']))
             approved += 1
         return approved
 
@@ -1370,8 +1366,6 @@ class ProcessingWorkspace(QObject):
             review.validate_bounds(a,b,self.duration)
             review.set_segment(self.session,i,self.ui.segmentLabel.currentText(),a,b,name)
             self.session['segments'][i]['source_mode'] = 'continuous_source'
-            # Keep the existing edit audit in sync even when only the mode changes.
-            self.session['changes'][-1]['after'] = copy.deepcopy(self.session['segments'][i])
         self.modified_session([i], spans_changed=bool(self.session['segments'][i].get('parent_unresolved_id')))
         self.segment_selected()
 

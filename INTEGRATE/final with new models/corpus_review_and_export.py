@@ -24,6 +24,8 @@ import soundfile as sf
 import transcript_agreement_and_io as asr
 import segment_review as review
 import clip_quality_assessment as snr
+from compact_review_history import CompactReviewHistory, expand_change_log
+from activity_history import events_only, keep_event, record_view, source_review_view
 
 RATE=16000
 VOICE=('speech','mixed')
@@ -56,8 +58,14 @@ def from_processing(processing):
     items={s['id']:s for s in processing.session['segments']+processing.session.get('unresolved',[])}
     qualities={s['id']:s for s in processing.snr_results} if review.same_snr_source(processing.snr_snapshot,processing.session) else {}
     changes_by_id={}
-    for event in processing.session.get('changes',[]):
-        changes_by_id.setdefault(event.get('item_id'),[]).append(event)
+    for event in events_only(processing.session.get('changes')):
+        after = event.get('after') or {}
+        ids = {event.get('item_id')}
+        if isinstance(after, dict):
+            ids.update(s['id'] for s in after.get('preserved_leftovers', []))
+            ids.update(after.get('generated_candidate_ids', []))
+        for ident in ids:
+            changes_by_id.setdefault(ident, []).append(event)
     source_path=str(Path(processing.audio).resolve())
     records=[]
     for row in inputs:
@@ -77,7 +85,7 @@ def from_processing(processing):
                       audio_pieces=[dict(path=source_path,start=a,end=b,synthetic_start=pad_a,synthetic_end=pad_b)],
                       asr_a_done=False,asr_b_done=False,source_mode='unresolved_preview' if unresolved else ('candidate_preview' if pending else 'continuous_source'),
                       segmentation_status=row['segmentation_status'],source_metadata=copy.deepcopy(item),quality_history=copy.deepcopy(quality.get('quality_changes',[])),
-                      human_changes=copy.deepcopy(changes_by_id.get(parent,[])+quality.get('quality_changes',[])),
+                      human_changes=copy.deepcopy(changes_by_id.get(parent,[])),
                       source_origin=str(processing.audio),original_approval=row['segmentation_status'] if unresolved or pending else 'approved')
         record.update(snr.corpus_fields(quality))
         record['audio_signature']=audio_signature(record)
@@ -218,14 +226,25 @@ def reset_audio_results(record):
 
 
 # Keep the editor, time and before/after values together for each change.
-def audit(log,action,who,before,after,reason=''):
+def audit(log,action,who,before,after,reason='', *, model=None):
     if not who.strip():raise ValueError('Enter the reviewer name first.')
-    entry=dict(time_utc=stamp(),reviewer=who.strip(),action=action,reason=reason,
-               before=copy.deepcopy(before),after=copy.deepcopy(after))
-    log.append(entry)
-    if isinstance(after,dict):
-        after.update(updated_by=who.strip(),updated_at=entry['time_utc'])
-        after.setdefault('human_changes',[]).append({k:v for k,v in entry.items() if k not in ('before','after')})
+    # New transcript events only contain transcript state, never entire source,
+    # quality or recursively embedded activity histories.
+    if action in ('transcript_review', 'choose_asr_model', 'edit_final_segment'):
+        keys=('segment_id','status','final_transcript','human_override')
+        def snapshot(value):
+            return {k: value[k] for k in keys if k in value} if isinstance(value,dict) else value
+        entry=dict(time_utc=stamp(),reviewer=who.strip(),action=action,reason=reason,
+                   before=snapshot(before),after=snapshot(after))
+        if model is not None:
+            entry['model']={'a':'Qwen','b':'Cohere'}.get(model,model)
+        if not keep_event(entry):return
+        if action == 'transcript_review' and not model and isinstance(before,dict) and isinstance(after,dict) and before.get('final_transcript','') == after.get('final_transcript',''):
+            return
+        log.append(entry)
+        if isinstance(after,dict):
+            after.update(updated_by=who.strip(),updated_at=entry['time_utc'])
+            after.setdefault('human_changes',[]).append({k:v for k,v in entry.items() if k not in ('before','after')})
 
 
 # Snap both endpoints to samples and check that they lie inside the source.
@@ -446,7 +465,7 @@ def process_summary(duration, regions, records, audit_log, *, session=None):
         before, after = event.get('before'), event.get('after')
         if not isinstance(after, dict):
             continue
-        if event.get('action') == 'transcript_review' or (
+        if event.get('action') in ('transcript_review','choose_asr_model') or (
             event.get('action') == 'edit_final_segment' and isinstance(before, dict)
             and any(before.get(k) != after.get(k) for k in ('final_transcript', 'status'))
         ):
@@ -551,14 +570,18 @@ REVIEW_COLUMNS = (
 )
 
 
-# Exact ordered header from the external review CSV format. Keep the richer
-# V15 exports too, because this schema cannot represent segmentation status.
+# Exact ordered header from the external review CSV format. The richer
+# segmentation status remains in JSON, HTML and standalone review-table saves.
 COMPATIBLE_REVIEW_COLUMNS = REVIEW_COLUMNS[:-1]
 COMPATIBLE_REVIEW_FILENAME = 'review_compatible.csv'
 
 
-def compatible_review_rows(records, rows):
-    """Project exported rows into the 16-column schema without normalizing text."""
+def compatible_review_rows(records, rows, *, audit=None):
+    """Project rows into the original 16-column schema with inline edit details.
+
+    Expand large history references only for the current CSV row. The HTML
+    and detailed JSON keep their existing compact representation.
+    """
     for record, row in zip(records, rows, strict=True):
         if record['segment_id'] != row['segment_id']:
             raise ValueError('Compatible CSV records and review rows are not aligned.')
@@ -568,10 +591,19 @@ def compatible_review_rows(records, rows):
         projected.update(model_A_transcript=record.get('transcript_a') or '',
                          model_B_transcript=record.get('transcript_b') or '',
                          final_transcript=record.get('final_transcript') or '')
+        if audit is not None:
+            projected['change_log'] = expand_change_log(projected['change_log'], audit)
+        # The compatible CSV is self-contained. Never silently write a compact
+        # history pointer if a caller forgets to provide the audit index.
+        events = json.loads(projected['change_log'])
+        if (isinstance(events, list) and len(events) == 1
+                and isinstance(events[0], dict)
+                and events[0].get('encoding') == 'event_refs_v1'):
+            raise ValueError('The compatible CSV needs the full activity history, not an audit reference.')
         yield projected
 
 
-def review_rows(records, audit_log):
+def review_rows(records, audit_log, *, compact_history=None):
     """Project records into the spreadsheet schema, preserving the caller's row order."""
     # Find segment IDs inside saved changes so each row gets its own history.
     def segment_ids(snapshot):
@@ -586,22 +618,18 @@ def review_rows(records, audit_log):
                 yield from segment_ids(value)
 
     history = {}
-    for event in audit_log:
+    for event in events_only(audit_log):
         for ident in set(segment_ids([event.get('before'), event.get('after')])):
             history.setdefault(ident, []).append(event)
     for record in records:
         ident = record['segment_id']
-        if record.get('segmentation_status')=='unresolved' or record.get('source_mode')=='unresolved_preview':
-            detailed = history.get(ident, [])
-            # Final review stores a compact copy of each detailed audit event on the row.
-            summaries = [{k:v for k,v in e.items() if k not in ('before','after')} for e in detailed]
-            changes = []
-            for event in [*record.get('human_changes', []), *record.get('quality_history', []), *detailed]:
-                if event not in summaries and event not in changes:
-                    changes.append(event)
-            changes.sort(key=lambda e:e.get('time_utc','').split('+')[0])
-        else:
-            changes = history.get(ident, record.get('human_changes', []))
+        detailed = history.get(ident, [])
+        summaries = [{k:v for k,v in e.items() if k not in ('before','after')} for e in detailed]
+        changes = []
+        for event in [*events_only(record.get('human_changes')), *detailed]:
+            if event not in summaries and event not in changes:
+                changes.append(event)
+        changes.sort(key=lambda e:e.get('time_utc','').split('+')[0])
         latest = changes[-1] if changes else {}
         status = record.get('status', 'needs_review')
         raw_a = record.get('transcript_a') or ''
@@ -628,9 +656,10 @@ def review_rows(records, audit_log):
             'automatic_status': record.get('automatic_status', ''),
             'segment_id': ident,
             'audio_file': record.get('file') or record.get('source_origin', ''),
-            'changed_by': latest.get('reviewer') or record.get('updated_by', ''),
-            'changed_at': latest.get('time_utc') or record.get('updated_at', ''),
-            'change_log': json.dumps(changes, ensure_ascii=False),
+            'changed_by': latest.get('reviewer', ''),
+            'changed_at': latest.get('time_utc', ''),
+            'change_log': (compact_history.encode(changes) if compact_history is not None
+                           else json.dumps(changes, ensure_ascii=False)),
             'segmentation_status': record.get('segmentation_status') or ('unresolved' if record.get('source_mode')=='unresolved_preview' else 'pending' if record.get('source_mode')=='candidate_preview' else 'resolved'),
         }
 
@@ -647,6 +676,17 @@ def iter_review_html(rows, partial=None, playable=False, export_mode=None):
                     f'<br><a href="{url}">Open WAV</a></td>')
         if key == 'change_log':
             details = text if value != '[]' else 'No changes recorded.'
+            if isinstance(value, str) and 'event_refs_v1' in value:
+                # Only corpus exports use this compact representation.
+                try:
+                    reference = json.loads(value)
+                    marker = reference[0] if len(reference) == 1 else {}
+                    if marker.get('encoding') == 'event_refs_v1':
+                        count = int(marker['event_count'])
+                        details = (f'{count} complete change events stored once in the audit JSON. '
+                                   '<a href="corpus_audit.json">Open full audit</a><br>' + text)
+                except (ValueError, TypeError, KeyError, IndexError, AttributeError):
+                    pass
             return f'<td><details><summary>View changes</summary>{details}</details></td>'
         css = ' class="transcript"' if key in ('model_A_transcript', 'model_B_transcript', 'final_transcript') else ''
         return f'<td dir="auto"{css}>{text}</td>'
@@ -769,11 +809,12 @@ def timeline_records(records, session=None, source='', qualities=(), *, include_
                 covered.extend(review.item_source_ranges(clip))
         quality_by_id = {q['id']:q for q in qualities}
         changes_by_parent = {}
-        for event in session.get('changes',[]):
+        for event in events_only(session.get('changes')):
             ids = {event.get('item_id')}
             after = event.get('after')
             if isinstance(after,dict):
                 ids.update(s['id'] for s in after.get('preserved_leftovers',[]))
+                ids.update(after.get('generated_candidate_ids',[]))
             for parent_id in ids:
                 changes_by_parent.setdefault(parent_id,[]).append(event)
         for item,a,b in (review.downstream_unresolved(session,covered) if include_unqueued else ()):
@@ -790,17 +831,14 @@ def timeline_records(records, session=None, source='', qualities=(), *, include_
                 cursor = max(cursor,right)
                 if cursor>=b:
                     break
-        preferences = {}
-        for event in session.get('asr_preference_history',[]):
-            preferences.setdefault(event['item_id'],[]).append(event)
         for index,record in enumerate(combined):
-            if record.get('segmentation_status')=='unresolved' or record.get('source_mode')=='unresolved_preview':
-                ident = record['segment_id']
-                parent = (record.get('source_metadata') or {}).get('id') or ident.split('@')[0]
-                combined[index] = dict(record, human_changes=[*changes_by_parent.get(parent,[]),
-                    *record.get('human_changes',[]), *(e for e in preferences.get(parent,[])
-                    if e['start']<record['end'] and e['end']>record['start'])], quality_history=[
-                    *record.get('quality_history',[]), *quality_by_id.get(ident,{}).get('quality_changes',[])])
+            ident = record['segment_id']
+            unresolved = record.get('segmentation_status')=='unresolved' or record.get('source_mode')=='unresolved_preview'
+            parent = ((record.get('source_metadata') or {}).get('id') or ident.split('@')[0]) if unresolved else ident
+            combined[index] = dict(record, human_changes=[*changes_by_parent.get(parent,[]),
+                    *events_only(record.get('human_changes'))])
+            if unresolved:
+                combined[index]['quality_history'] = [*record.get('quality_history',[]), *quality_by_id.get(ident,{}).get('quality_changes',[])]
     return sorted(combined,key=lambda r:(r['start'],r['end'],r['segment_id']))
 
 
@@ -927,9 +965,12 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
     progress('Validating corpus records and source files')
     if automatic and not allow_partial:
         raise ValueError('Automatic export must use partial mode.')
+    audit_log = events_only(audit_log)
+    if manifest.get('source_review') is not None:
+        manifest = dict(manifest, source_review=source_review_view(manifest['source_review']))
     source_review = manifest.get('source_review') or {}
     session = source_review.get('step4')
-    records = transcription_export_records(records, session, manifest.get('audio',''), source_review.get('snr') or [])
+    records = [record_view(r) for r in transcription_export_records(records, session, manifest.get('audio',''), source_review.get('snr') or [])]
     # Older saved rows may carry only the explicit segmentation status.
     def status(r):
         return r.get('segmentation_status') or ('unresolved' if r.get('source_mode')=='unresolved_preview'
@@ -1029,18 +1070,28 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
             write_json_file(out/'source_review.json', manifest['source_review'])
             metadata['source_review_file']='source_review.json'
         progress('Building review rows')
-        rows = list(review_rows(exported, audit_log))
-        progress('Writing detailed corpus CSV')
-        write_review_table(out / 'corpus.csv', rows)
-        progress('Writing compatible 16-column review CSV')
+        compact_history = CompactReviewHistory(exported, audit_log)
+        rows = list(review_rows(exported, audit_log, compact_history=compact_history))
+        audit = dict(segments=exported, audit_log=audit_log,
+                     review_history=compact_history.index)
+        progress('Writing compatible 16-column review CSV with full edit history')
         write_review_table(out / COMPATIBLE_REVIEW_FILENAME,
-                           compatible_review_rows(exported, rows),
+                           compatible_review_rows(exported, rows, audit=audit),
                            csv_columns=COMPATIBLE_REVIEW_COLUMNS)
         metadata['compatible_review_csv'] = COMPATIBLE_REVIEW_FILENAME
+        metadata['compatible_review_csv_change_log_encoding'] = 'inline_json'
+        metadata['change_log_representation'] = {
+            'encoding': 'inline_or_event_refs_v1',
+            'applies_to': ['corpus.json', 'corpus_report.html'],
+            'audit_file': 'corpus_audit.json',
+            'referenced_rows': len(compact_history.index),
+            'inline_character_limit': compact_history.inline_limit,
+            'restore_tool': 'restore_full_review_csv.py',
+        }
         progress('Writing corpus metadata JSON')
         write_json_file(out/'corpus.json', dict(metadata=metadata, segments=rows))
         progress('Writing corpus audit JSON')
-        write_json_file(out/'corpus_audit.json', dict(segments=exported, audit_log=audit_log))
+        write_json_file(out/'corpus_audit.json', audit)
         progress('Writing playable corpus HTML report')
         write_review_html(out/'corpus_report.html', rows, partial=partial, playable=True, export_mode=export_mode)
         return dict(output_dir=str(out),clips=len(exported),partial=partial,export_mode=export_mode)

@@ -172,7 +172,7 @@ with tempfile.TemporaryDirectory() as directory, \
     item = p.session['segments'][0]
     assert item['source_mode'] == 'continuous_source'
     assert (item['source_start'],item['source_end']) == (12,18)
-    assert p.session['changes'][-1]['after']['source_mode'] == 'continuous_source'
+    assert not any(e['action']=='edit_segment' for e in p.session['changes'])
     # Unresolved spans can be much longer than clips and keep source coordinates.
     w.unresolvedTable.selectRow(0)
     gap = w.unresolvedSeekSlider
