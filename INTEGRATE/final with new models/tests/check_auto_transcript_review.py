@@ -18,7 +18,7 @@ os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import numpy as np
 import soundfile as sf
-from PyQt6.QtWidgets import QApplication, QInputDialog, QMessageBox
+from PyQt6.QtWidgets import QApplication, QFileDialog, QInputDialog, QMessageBox
 import corpus_review_and_export as corpus
 import transcript_agreement_and_io as engines
 import segment_review
@@ -26,7 +26,7 @@ from speech_corpus_app import MainWindow
 
 
 def check():
-    """Run a batch, inspect the pending choice, choose Qwen and approve its audio."""
+    """Run a batch, inspect automatic approvals and the pending transcript choice."""
     app = QApplication([])
     window = MainWindow(show_welcome=False)
     p = window.processing
@@ -63,6 +63,9 @@ def check():
                 duration_seconds=24, segments=segments, unresolved=[dict(start=17, end=23), dict(start=23, end=23.5)])))
             return {'output_dir': target}
         errors = []
+        export_destination = root / 'external_destination'
+        export_destination.mkdir()
+        export_dialog = mocks.enter_context(patch.object(QFileDialog, 'getExistingDirectory', return_value=str(export_destination)))
         mocks.enter_context(patch.object(QInputDialog, 'getText', return_value=('Test editor', True)))
         mocks.enter_context(patch.object(QMessageBox, 'warning', side_effect=lambda *args: errors.append(args[-1])))
         mocks.enter_context(patch('audio_review_controller.classify_file', return_value=[
@@ -71,8 +74,8 @@ def check():
         mocks.enter_context(patch.object(engines, 'load_qwen_model', return_value={}))
         mocks.enter_context(patch.object(engines, 'load_cohere_model', return_value=dict(
             engine=engines.COHERE_ENGINE, model_name=engines.DEFAULT_COHERE_MODEL)))
-        mocks.enter_context(patch.object(engines, 'transcribe_qwen', side_effect=[('مَدْرَسَة', None), ('أهلاً بكم', None), ('واحد اثنان ثلاثة أربعة خمسة', None)]))
-        mocks.enter_context(patch.object(engines, 'transcribe_cohere', side_effect=[('مدرسة', None), ('أهلاً بالجميع', None), ('شمس قمر بحر أرض نهر', None)]))
+        mocks.enter_context(patch.object(engines, 'transcribe_qwen', side_effect=[('مَدْرَسَة', None), ('أهلاً بكم', None), ('واحد اثنان ثلاثة أربعة خمسة ستة', None)]))
+        mocks.enter_context(patch.object(engines, 'transcribe_cohere', side_effect=[('مدرسة', None), ('أهلاً بالجميع', None), ('شمس قمر بحر أرض نهر جبل', None)]))
         # A bad source must end the chain before region labeling can start.
         broken = root / 'broken.mkv'
         broken.write_bytes(b'invalid video')
@@ -99,7 +102,7 @@ def check():
         assert np.array_equal(sf.read(p.audio, dtype='int16')[0], sf.read(source, dtype='int16')[0])
         assert sf.info(p.audio).subtype == 'PCM_16' and sf.info(p.audio).samplerate == 16000
         assert p.snr_report.is_relative_to(root / 'Audio quality SNR')
-        assert 'Pending listening review' in p.snr_report.read_text(encoding='utf-8')
+        assert 'optional manual corrections' in p.snr_report.read_text(encoding='utf-8')
         assert p.snr_report.with_suffix('.csv').is_file()
         quality = json.loads(p.snr_report.with_suffix('.json').read_text(encoding='utf-8'))
         saved = json.loads(workspace.autosave_path.read_text(encoding='utf-8'))['asr']['records']
@@ -111,8 +114,14 @@ def check():
         assert third['segmentation_status'] == 'unresolved' and not third['final_transcript']
         assert first['status'] == 'accepted' and first['final_transcript'] == 'مدرسة'
         assert second['status'] == 'needs_review' and not second['final_transcript'] and not second['automatic_choice']
-        assert window.asrTable.currentRow() == 1 and not window.asrFinalText.toPlainText()
-        assert all(s['status'] == 'pending' for s in p.session['segments'])
+        assert all(s['status'] == 'approved' and s['pdf_boundary_review']['approval_method'] == 'auto_process' for s in p.session['segments'])
+        export_dialog.assert_called_once()
+        exported = next(export_destination.rglob('corpus_report.html'))
+        assert (exported.parent / 'review_compatible.csv').is_file()
+        assert json.loads((exported.parent / 'corpus.json').read_text(encoding='utf-8'))['metadata']['export_mode'] == 'automatic_partial'
+        window.asrTable.selectRow(1)
+        app.processEvents()
+        assert not window.asrFinalText.toPlainText()
         rows = list(corpus.review_rows(workspace.records, []))
         assert rows[0]['model_A_transcript'] == rows[0]['model_B_transcript'] == rows[0]['final_transcript'] == 'مدرسه'
         assert rows[1]['final_transcript'] == ''

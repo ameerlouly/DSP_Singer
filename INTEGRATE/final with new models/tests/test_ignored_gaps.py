@@ -66,25 +66,27 @@ class GapExportTests(unittest.TestCase):
         pcm,rate=sf.read(out/urls[0],dtype='int16');self.assertEqual(rate,16000)
         np.testing.assert_array_equal(pcm,self.samples[:8*16000])
 
-    def test_genuine_unresolved_still_blocks_complete_export(self):
+    def test_genuine_unresolved_does_not_block_complete_export(self):
         self.session['unresolved'].append(dict(id='unresolved-00001', category='unresolved',
             label='unclassified',status='pending',original=dict(start=10,end=22)))
         self.assertEqual([r[1]['id'] for r in review.visible_unresolved(self.session)],['unresolved-00001'])
         with patch.object(corpus,'compare'):
-            with self.assertRaisesRegex(ValueError,'source candidates or unresolved'):
-                corpus.export_corpus([self.record],self.manifest(),[],self.root/'out')
-            result=corpus.export_corpus([self.record],self.manifest(),[],self.root/'out',True)
-        self.assertEqual(result['clips'],2);self.assertTrue(result['partial'])
+            result=corpus.export_corpus([self.record],self.manifest(),[],self.root/'out',False)
+        self.assertEqual(result['clips'],1);self.assertTrue(result['partial'])
         meta=json.loads((Path(result['output_dir'])/'corpus.json').read_text())['metadata']
-        self.assertEqual(meta['pending_boundary_segment_ids'],['unresolved-00001'])
+        self.assertEqual(meta['pending_boundary_segment_ids'],[])
+        self.assertEqual(meta['unresolved_export_segment_ids'],[])
+        self.assertEqual(meta['source_unresolved_span_count'],1)
+        self.assertEqual(meta['export_mode'],'complete_with_unresolved')
+        self.assertEqual(meta['unresolved_source_spans'],1)
 
     def test_old_explicit_voice_gap_preserved(self):
         self.gap.update(label='mixed')
         self.assertEqual(len(review.visible_unresolved(self.session)),1)
         self.assertEqual(len(list(review.downstream_unresolved(self.session,[]))),1)
         with patch.object(corpus,'compare'):
-            with self.assertRaisesRegex(ValueError,'pending'):
-                corpus.export_corpus([self.record],self.manifest(),[],self.root/'out')
+            result=corpus.export_corpus([self.record],self.manifest(),[],self.root/'out',False)
+        self.assertEqual(result['clips'],1);self.assertEqual(result['export_mode'],'complete_with_unresolved')
 
     def test_legacy_unclassified_gap_preview_filtered_from_report_and_export(self):
         preview=dict(segment_id='gap-00001',start=8,end=10,label='unclassified',

@@ -461,7 +461,7 @@ class ProcessingWorkspace(QObject):
                 self.auto_stage = 'segments'
                 self.generate_segments(output_folder=self.source_folder(), confirmed=True)
             elif self.auto_stage == 'segments':
-                self.session['analyze_pending_candidates'] = True
+                self.auto_approve_candidates()
                 self.auto_stage = 'snr'
                 self.calculate_snr()
             elif self.auto_stage == 'snr':
@@ -485,7 +485,10 @@ class ProcessingWorkspace(QObject):
                     self.status('Transcription stopped or had errors. Check Transcription and Activity before continuing. Automatic export was not started.')
                 else:
                     self.auto_stage = 'export'
-                    self.asr.export_automatic()
+                    if not self.asr.export_automatic():
+                        self.auto_stage = None
+                        self.window.navigationList.setCurrentRow(5)
+                        self.status('Export cancelled. SNR and transcription autosaves are preserved; export later from Review and Export.')
             elif self.auto_stage == 'export':
                 # The export worker has successfully saved the corpus and playable HTML.
                 self.auto_stage = None
@@ -1383,6 +1386,32 @@ class ProcessingWorkspace(QObject):
             if answer!=QMessageBox.StandardButton.Yes:return
         count=review.approve_segments(self.session,rows,self.reviewer())
         self.modified_session(rows);self.status(f'{count} clips approved. Export or calculate SNR when ready.')
+
+    def auto_approve_candidates(self):
+        """Approve generated continuous 5–15 s clips before SNR, without claiming listening."""
+        if not self.session:
+            raise ValueError('Generate segments before automatic approval.')
+        rows, skipped = review.batch_approval_plan(self.session)
+        # The fresh automatic session should be nonoverlapping. Validate atomically
+        # so a damaged candidate set cannot create overlapping approved clips.
+        draft = dict(self.session, segments=list(self.session['segments']), changes=[])
+        count = review.approve_segments(draft, rows, self.reviewer(), approval_method='auto_process') if rows else 0
+        if review.overlapping_approved(draft):
+            raise ValueError('Automatic candidates overlap. Correct the source ranges before approving.')
+        self.session['segments'] = draft['segments']
+        self.session['changes'].extend(draft['changes'])
+        # Every valid candidate is now approved; malformed/out-of-range candidates
+        # must not enter the pending-candidate SNR path (which requires 5–15 s).
+        self.session['analyze_pending_candidates'] = False
+        if rows:
+            self.modified_session(rows)
+        for index, reason in skipped:
+            self.window.append_log(f"Auto approval skipped {self.session['segments'][index]['id']}: {reason}")
+        message = (f'{count} valid candidates automatically approved before SNR. '
+                   f'{len(skipped)} invalid candidates left pending; unresolved spans remain separate. '
+                   'Automatic approval is not a listening check.')
+        self.window.append_log(message)
+        self.status(message)
 
     # Approve all duration-valid pending candidates, including boundary-review candidates.
     def approve_all(self):

@@ -104,10 +104,20 @@ def session_records(data,source,*,include_unresolved=True,for_transcription=Fals
         item=items[ident];source_a,source_b=review.require_pdf_review(data,item)
         duration=b-a;original=item.get('original') or {}
         unchanged=abs(source_a-float(original.get('start',-1)))<1/16000 and abs(source_b-float(original.get('end',-1)))<1/16000
-        left=float(original.get('left_padding',.1)) if unchanged else .1
-        right=float(original.get('right_padding',.1)) if unchanged else .1
-        left,right=min(.2,max(.1,left)),min(.2,max(.1,right))
-        pauses=[[0.,left],[duration-right,duration]]
+        automated=(item.get('pdf_boundary_review') or {}).get('approval_method')=='auto_process'
+        if automated:
+            # Do not treat unverified edge context as measured quiet frames.
+            left=float(original.get('left_padding',0.)) if unchanged else 0.
+            right=float(original.get('right_padding',0.)) if unchanged else 0.
+            left,right=min(.2,max(0.,left)),min(.2,max(0.,right))
+            pauses=[]
+            if left>=.1:pauses.append([0.,left])
+            if right>=.1:pauses.append([duration-right,duration])
+        else:
+            left=float(original.get('left_padding',.1)) if unchanged else .1
+            right=float(original.get('right_padding',.1)) if unchanged else .1
+            left,right=min(.2,max(.1,left)),min(.2,max(.1,right))
+            pauses=[[0.,left],[duration-right,duration]]
         for p in data.get('pause_intervals',[]):
             x,y=max(source_a,float(p['start'])),min(source_b,float(p['end']))
             if y>x:pauses.append([x-source_a,y-source_a])
@@ -115,7 +125,9 @@ def session_records(data,source,*,include_unresolved=True,for_transcription=Fals
         out.append(dict(segmentation_status='resolved',id=ident,file=Path(path).name,path=path,read_start=a,read_end=b,
             audio_file_size=stat.st_size,audio_file_mtime_ns=stat.st_mtime_ns,
             source_start=source_a,source_end=source_b,content_label=label,synthetic_start=0.,synthetic_end=0.,
-            pause_intervals=pauses,pause_basis='Part 4 detector intervals plus named reviewer boundary confirmation'))
+            pause_intervals=pauses or None, automatic_boundary_approval=automated,
+            pause_basis=('Part 4 detector intervals (automatic approval; no listening confirmation)' if pauses else 'Quiet-frame fallback')
+                        if automated else 'Part 4 detector intervals plus named reviewer boundary confirmation'))
     previews = []
     if data.get('analyze_pending_candidates'):
         for item in data['segments']:
@@ -174,7 +186,7 @@ def calculate(records,threshold,progress=None,*,policy='conservative',justificat
             analysis=decision(dict(analysis_version=2,energy_snr_db=None,wada_snr_db=None,
                 energy_details=dict(notes=[str(exc)]),wada_details=dict(notes=[str(exc)]),content_label=item.get('content_label','speech')),threshold,policy,justification)
         item.update(analysis)
-        if item.get('segmentation_status') in ('unresolved', 'pending') and item.get('noise_source') == 'reviewed_part4_pause_context':
+        if (item.get('automatic_boundary_approval') or item.get('segmentation_status') in ('unresolved', 'pending')) and item.get('noise_source') == 'reviewed_part4_pause_context':
             item['noise_source'] = item['energy_details']['noise_source'] = 'estimated_part4_pause'
         result.append(item)
         if progress:progress(index+1,len(records))

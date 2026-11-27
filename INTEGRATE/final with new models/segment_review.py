@@ -235,10 +235,13 @@ def approve_segment(data, index, reviewer, *, approval_method="individual"):
     before=copy.deepcopy(item)
     # Check actual sample count and continuous source mapping, including exact 5/15 s boundaries.
     signature=pdf_review_signature(data,item)
+    automatic = approval_method == 'auto_process'
     item['pdf_boundary_review']=dict(reviewer=reviewer,time_utc=utc_now(),signature=signature,approval_method=approval_method,
-        attestation='Annotator confirms complete words, real pauses and about 0.1–0.2 s natural pause at both edges; no synthetic padding or joins.')
+        attestation=('Automatically approved by Auto Process: duration and continuous source mapping validated; natural pauses and complete words have not been confirmed by listening.'
+                     if automatic else 'Annotator confirms complete words, real pauses and about 0.1–0.2 s natural pause at both edges; no synthetic padding or joins.'),
+        human_listening_confirmed=not automatic)
     item.update(status='approved', reviewed_by=reviewer)
-    audit(data,'approve_segment',reviewer,item['id'],before,item)
+    audit(data,'auto_approve_segment' if automatic else 'approve_segment',reviewer,item['id'],before,item)
 
 
 def approve_segments(data, indices, reviewer, *, approval_method="individual"):
@@ -257,7 +260,8 @@ def approve_segments(data, indices, reviewer, *, approval_method="individual"):
         if item['status'] == 'excluded':
             raise ValueError('An excluded clip is selected. Edit it individually to return it to pending before approval.')
         checked=(item.get('pdf_boundary_review') or {}).get('signature')
-        if item['status'] != 'approved' or checked!=pdf_review_signature(draft,item):
+        if (item['status'] != 'approved' or checked!=pdf_review_signature(draft,item)
+                or (approval_method != 'auto_process' and (item.get('pdf_boundary_review') or {}).get('approval_method') == 'auto_process')):
             try:
                 draft['segments'][index] = copy.copy(item)
                 approve_segment(draft, index, reviewer, approval_method=approval_method)

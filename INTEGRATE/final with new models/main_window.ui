@@ -4430,6 +4430,12 @@ QPushButton#playQuality:disabled {background:#E3E9EB; color:#61777C; border:1px 
                   <property name="text">
                    <string>Allow partial export (include unfinished clips with their pending status)</string>
                   </property>
+                  <property name="checked">
+                   <bool>true</bool>
+                  </property>
+                  <property name="toolTip">
+                   <string>Enabled by default. Uncheck to require approved candidates and completed SNR/transcription on resolved clips. Unresolved spans can be exported in either mode and retain their unresolved status.</string>
+                  </property>
                  </widget>
                 </item>
                 <item>

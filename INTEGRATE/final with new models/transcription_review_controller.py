@@ -627,10 +627,16 @@ class ASRWorkspace(QObject):
             self.check_current()
 
     def export_automatic(self):
-        """Save a partial snapshot without opening a dialog or approving any review."""
+        """Choose a destination after ASR, then export a partial snapshot."""
         self.check_export_current()
-        directory = self.p.source_folder() / 'Review and export' / 'Automatic partial export'
+        directory = QFileDialog.getExistingDirectory(self.w, 'Choose automatic partial corpus export location',
+                                                      str(self.p.source_folder()))
+        if not directory:
+            return False
+        self.ui.allowPartialExport.setChecked(True)
+        directory = step_folder(directory, 'Review and export') / 'Automatic partial export'
         self.start_corpus_export(directory, True, automatic=True)
+        return True
 
     def start_corpus_export(self, directory, partial, *, automatic=False):
         # Export runs with editing controls disabled and treats nested review data as read-only.
@@ -650,7 +656,7 @@ class ASRWorkspace(QObject):
                 self.w.append_log(message)
                 self.p.status(message)
             else:
-                self.p.status(f"Exported {result['clips']} clips to {result['output_dir']}. Partial: {result['partial']}.")
+                self.p.status(f"Exported {result['clips']} clips to {result['output_dir']}. Mode: {result.get('export_mode', 'partial' if result['partial'] else 'complete')}." )
                 self.w.open_path(Path(result['output_dir']))
         self.p.start('Writing corpus WAV, TXT, CSV and playable HTML…',
                      lambda log:corpus.export_corpus(records,metadata,audit,directory,partial,automatic=automatic,log=log),done)

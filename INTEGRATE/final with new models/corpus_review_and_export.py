@@ -636,7 +636,7 @@ def review_rows(records, audit_log):
 
 
 # Build the review page, including audio controls when clips are available.
-def iter_review_html(rows, partial=None, playable=False):
+def iter_review_html(rows, partial=None, playable=False, export_mode=None):
     """Yield the document a row at a time so long reports need less memory."""
     # Escape values for display and give audio and history cells their own controls.
     def cell(key, value):
@@ -658,6 +658,8 @@ def iter_review_html(rows, partial=None, playable=False):
     headers = ''.join(f'<th scope="col">{key}</th>' for key in columns)
     title = 'Speech corpus review' if partial is None else 'Speech corpus export'
     subtitle = ' · Partial export — unfinished boundaries and transcripts are not approved' if partial else ''
+    if export_mode == 'complete_with_unresolved':
+        subtitle = ' · Complete-mode export with unresolved intervals — only included transcription clips are exported; unresolved audio is not approved' 
     yield f"""<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{title}</title><style>
 body{{box-sizing:border-box;margin:0;padding:clamp(8px,2vw,20px);height:100vh;height:100dvh;display:flex;flex-direction:column;font:15px/1.5 'Segoe UI',sans-serif;color:#173b40}}
@@ -683,9 +685,9 @@ def review_html(rows, partial=None, playable=False):
     return ''.join(iter_review_html(rows, partial, playable))
 
 
-def write_review_html(path, rows, partial=None, playable=False):
+def write_review_html(path, rows, partial=None, playable=False, export_mode=None):
     with Path(path).open('w', encoding='utf-8') as stream:
-        stream.writelines(iter_review_html(rows, partial, playable))
+        stream.writelines(iter_review_html(rows, partial, playable, export_mode))
 
 
 # Use the destination extension to pick the writer for the same review table.
@@ -748,7 +750,7 @@ def ignored_gap_record(record, gap_items=None):
                                    label=record.get('label') or meta.get('label')))
 
 
-def timeline_records(records, session=None, source='', qualities=()):
+def timeline_records(records, session=None, source='', qualities=(), *, include_unqueued=True):
     """Include unresolved source time even when a span was skipped for transcription."""
     gap_items = {item['id']:item for item in (session or {}).get('unresolved', [])}
     records = [r for r in records if not ignored_gap_record(r, gap_items)]
@@ -774,7 +776,7 @@ def timeline_records(records, session=None, source='', qualities=()):
                 ids.update(s['id'] for s in after.get('preserved_leftovers',[]))
             for parent_id in ids:
                 changes_by_parent.setdefault(parent_id,[]).append(event)
-        for item,a,b in review.downstream_unresolved(session,covered):
+        for item,a,b in (review.downstream_unresolved(session,covered) if include_unqueued else ()):
             parent = item['id']
             cursor = a
             for left,right in sorted(previews.get(parent,[])) + [(b,b)]:
@@ -800,6 +802,39 @@ def timeline_records(records, session=None, source='', qualities=()):
                     if e['start']<record['end'] and e['end']>record['start'])], quality_history=[
                     *record.get('quality_history',[]), *quality_by_id.get(ident,{}).get('quality_changes',[])])
     return sorted(combined,key=lambda r:(r['start'],r['end'],r['segment_id']))
+
+
+def transcription_export_records(records, session=None, source='', qualities=()):
+    """Export only the included, ASR-eligible rows, never synthesize skipped spans.
+
+    The saved source review remains a full audit of the recording. The UI checks
+    the source signature before exporting; the additional preference check here
+    prevents stale legacy records from leaking excluded audio into the export.
+    """
+    session = session or {}
+    items = {item['id']: item for item in session.get('unresolved', [])}
+    excluded = {item['id'] for item in session.get('segments', []) if item.get('status') == 'excluded'}
+    selected = []
+    for r in records:
+        ident = r['segment_id']
+        if ident in excluded or ignored_gap_record(r, items):
+            continue
+        unresolved = r.get('segmentation_status') == 'unresolved' or r.get('source_mode') == 'unresolved_preview'
+        preview = unresolved or is_preview(r) or r.get('segmentation_status') == 'pending'
+        if r.get('label') not in VOICE and not (preview and r.get('label') == 'unclassified'):
+            continue
+        if unresolved:
+            a, b = r['start'], r['end']
+            if review.under_one_second(a, b):
+                continue
+            parent = (r.get('source_metadata') or {}).get('id') or ident.split('@')[0]
+            ranges = list(review.transcription_ranges(session, {'id': parent}, a, b))
+            if len(ranges) != 1 or tuple(round(t * RATE) for t in ranges[0]) != (round(a * RATE), round(b * RATE)):
+                # Never trim a transcript's audio to a different interval; sync
+                # the queue first if the reviewer changed inclusion preferences.
+                continue
+        selected.append(r)
+    return timeline_records(selected, session, source, qualities, include_unqueued=False)
 
 
 # Order the combined timeline and attach the edits belonging to each row.
@@ -860,10 +895,10 @@ def export_playable_review(path, records, audit_log, source=''):
 
 # Build the review rows once and write them in the user's chosen format.
 def export_review_csv(path, records, audit_log, session=None, source='', qualities=()):
+    ordered = transcription_export_records(records, session, source, qualities)
     if Path(path).suffix.lower() == '.html':
-        ordered = timeline_records(records, session, source, qualities)
         return export_playable_review(path, ordered, audit_log, source)
-    return write_review_table(path,report_rows(records,audit_log,session,source,qualities))
+    return write_review_table(path, list(review_rows(ordered, audit_log)))
 
 
 # Check the current review state before writing the corpus and its audit trail.
@@ -894,11 +929,13 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
         raise ValueError('Automatic export must use partial mode.')
     source_review = manifest.get('source_review') or {}
     session = source_review.get('step4')
-    gap_items = {item['id']:item for item in (session or {}).get('unresolved', [])}
-    records = [r for r in records if not ignored_gap_record(r, gap_items)]
-    previews = [r for r in records if is_preview(r)]
-    has_unresolved = bool(previews)
-    records = [r for r in records if not is_preview(r)]
+    records = transcription_export_records(records, session, manifest.get('audio',''), source_review.get('snr') or [])
+    # Older saved rows may carry only the explicit segmentation status.
+    def status(r):
+        return r.get('segmentation_status') or ('unresolved' if r.get('source_mode')=='unresolved_preview'
+                                                 else 'pending' if is_preview(r) else 'resolved')
+    previews = [r for r in records if status(r) in ('pending','unresolved')]
+    records = [r for r in records if status(r) not in ('pending','unresolved')]
     records=[snr.optional_quality_record(dict(r)) for r in records]
     for record in records:compare(record)
     if overlaps(records):raise ValueError('Final source spans overlap; correct them before corpus export.')
@@ -912,14 +949,9 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
         if r['clean_noisy'] not in ('clean','noisy'):pending.append(r['segment_id'])
         if r.get('snr_db') is None or (r.get('snr_analysis') or {}).get('analysis_version')!=2 or r.get('snr_audio_signature')!=r['audio_signature']:
             pending.append(r['segment_id'])
-    timeline = timeline_records([*records,*previews],session,
-                                manifest.get('audio',''),source_review.get('snr') or [])
-    # Recover the segmentation status for records from older sessions as well.
-    def status(r):
-        return r.get('segmentation_status') or ('unresolved' if r.get('source_mode')=='unresolved_preview'
-                                                 else 'pending' if is_preview(r) else 'resolved')
+    timeline = sorted([*records,*previews], key=lambda r:(r['start'],r['end'],r['segment_id']))
     if not timeline:
-        raise ValueError('No clips or unresolved spans to export.')
+        raise ValueError('No included transcription clips to export. Include the wanted spans and reload the Transcription table.')
     boundary_pending=[r['segment_id'] for r in timeline if status(r) in ('pending','unresolved')]
     # Recompute from the actual saved session when available. Old manifests may
     # have counted every gap as pending; those counts must not block export.
@@ -927,9 +959,21 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
                           if session is not None else manifest.get('pending_source_candidates', 0))
     pending_spans = (sum(r.get('status') != 'reviewed' for _,r,_,_ in review.visible_unresolved(session))
                      if session is not None else manifest.get('unresolved_source_spans', 0))
-    source_pending=bool(boundary_pending or has_unresolved or pending_candidates or pending_spans)
-    if source_pending and not allow_partial:
-        raise ValueError('Some source candidates or unresolved spans are still pending. Finish source review or explicitly enable partial export.')
+    # Complete mode validates the resolved clips, but unresolved source intervals
+    # are allowed as separately identified previews, even if not reviewed yet.
+    unresolved_ids = {r['segment_id'] for r in timeline if status(r) == 'unresolved'}
+    candidate_ids = {r['segment_id'] for r in timeline if status(r) == 'pending'}
+    if session is not None:
+        candidate_ids.update(r['id'] for r in session.get('segments', []) if r.get('status') == 'pending')
+    source_unresolved_count = (len(review.visible_unresolved(session)) if session is not None
+                               else max(len(unresolved_ids), pending_spans))
+    source_pending=bool(boundary_pending or pending_candidates or pending_spans or source_unresolved_count)
+    if (candidate_ids or pending_candidates) and not allow_partial:
+        ordered = sorted(candidate_ids)
+        examples = ', '.join(ordered[:8]) + (f' (+{len(ordered)-8} more)' if len(ordered)>8 else '')
+        raise ValueError(
+            f'Some source candidates are still pending (count: {max(pending_candidates,len(candidate_ids))}; IDs: {examples or "unknown"}).\n'
+            'Approve those candidates or enable Allow partial export. Unresolved spans do not block complete export.')
     if pending and not allow_partial:raise ValueError(f'{len(set(pending))} clips need completed ASR decisions or current usable SNR measurements. Complete them or explicitly enable partial export.')
     for record in records:require_continuous_pdf_audio(record)
     progress('Creating corpus output folder')
@@ -964,9 +1008,15 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
                      sha256=review.file_sha256(wav),segmentation_status=state)
             exported.append(r)
         partial=bool(automatic or pending or source_pending)
+        export_mode = ('automatic_partial' if automatic else 'manual_partial' if allow_partial and partial
+                       else 'complete_with_unresolved' if not allow_partial and source_pending else 'complete')
         metadata=dict(manifest,exported_utc=stamp(),partial=partial,
                       pending_source_candidates=pending_candidates,unresolved_source_spans=pending_spans,
-                      export_mode='automatic_partial' if automatic else ('manual_partial' if partial else 'complete'),
+                      export_mode=export_mode,
+                      export_scope='included_transcription_records_only',
+                      source_unresolved_span_count=source_unresolved_count,
+                      unresolved_export_segment_ids=sorted(unresolved_ids),
+                      unresolved_spans_block_complete_export=False,
                       pending_segment_ids=sorted(set(pending+boundary_pending)),
                       pending_boundary_segment_ids=sorted(set(boundary_pending)),
                       asr_comparison_policy=asr.comparison_policy(),
@@ -993,8 +1043,8 @@ def _export_corpus(records,manifest,audit_log,destination,allow_partial,automati
         progress('Writing corpus audit JSON')
         write_json_file(out/'corpus_audit.json', dict(segments=exported, audit_log=audit_log))
         progress('Writing playable corpus HTML report')
-        write_review_html(out/'corpus_report.html', rows, partial=partial, playable=True)
-        return dict(output_dir=str(out),clips=len(exported),partial=partial)
+        write_review_html(out/'corpus_report.html', rows, partial=partial, playable=True, export_mode=export_mode)
+        return dict(output_dir=str(out),clips=len(exported),partial=partial,export_mode=export_mode)
     except BaseException:
         # A failed run is not a successfully exported dataset. Earlier runs are untouched.
         shutil.rmtree(out, ignore_errors=True)
